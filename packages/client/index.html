@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AGENTWORLD — Emberfall Isle</title>
+  <style>
+    :root {
+      --panel-bg: rgba(14, 11, 20, 0.86);
+      --panel-border: #3a2f55;
+      --gold: #c9a557;
+      --ink: #d8d2c4;
+      --muted: #837d92;
+      --accent: #7ec8e3;
+      --danger: #e36a6a;
+      --ok: #8fce6e;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      overflow: hidden; background: #0b0a12;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--ink);
+    }
+    #render-canvas {
+      width: 100%; height: 100%; display: block; outline: none;
+      touch-action: none;
+    }
+    .hud { position: absolute; z-index: 10; }
+    .panel {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      box-shadow: 0 0 18px rgba(0, 0, 0, 0.7);
+      padding: 10px 12px;
+    }
+    h3 {
+      margin: 0 0 6px 0; font-size: 13px; letter-spacing: 2px;
+      text-transform: uppercase; color: var(--gold); font-weight: normal;
+      border-bottom: 1px solid var(--panel-border); padding-bottom: 4px;
+    }
+
+    /* ---- top-left: AP + shards ---- */
+    #status-panel { top: 14px; left: 14px; min-width: 230px; }
+    #ap-bar {
+      position: relative; height: 18px; border: 1px solid var(--panel-border);
+      border-radius: 4px; background: #1a1426; overflow: hidden;
+    }
+    #ap-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #2d6a4f, #74c69d);
+      transition: width 0.25s ease;
+    }
+    #ap-text {
+      position: absolute; inset: 0; text-align: center; font-size: 12px;
+      line-height: 18px; color: #f0ead8; text-shadow: 0 1px 2px #000;
+    }
+    #shards { margin-top: 6px; font-size: 14px; color: var(--gold); }
+    #conn-status { margin-top: 4px; font-size: 11px; color: var(--muted); }
+
+    /* ---- bottom-left: chat ---- */
+    #chat-panel {
+      left: 14px; bottom: 14px; width: 420px;
+      display: flex; flex-direction: column;
+    }
+    #chat-log {
+      height: 190px; overflow-y: auto; font-size: 13px; line-height: 1.45;
+      padding-right: 4px; scrollbar-width: thin;
+    }
+    #chat-log .line { margin: 1px 0; word-wrap: break-word; }
+    #chat-log .ch { color: var(--muted); font-size: 11px; }
+    #chat-log .who { color: var(--accent); }
+    #chat-log .who.agent { color: #e8a04c; }
+    #chat-log .sys { color: var(--muted); font-style: italic; }
+    #chat-log .err { color: var(--danger); }
+    #chat-row { display: flex; gap: 6px; margin-top: 8px; }
+    #chat-channel {
+      background: #221a35; color: var(--gold); border: 1px solid var(--panel-border);
+      border-radius: 4px; font-family: inherit; font-size: 12px; cursor: pointer;
+      width: 64px;
+    }
+    #chat-input {
+      flex: 1; background: #16101f; border: 1px solid var(--panel-border);
+      border-radius: 4px; color: var(--ink); padding: 6px 8px;
+      font-family: inherit; font-size: 13px;
+    }
+    #chat-input:focus { outline: 1px solid var(--gold); }
+
+    /* ---- right: collapsible inventory/craft/market ---- */
+    #side-panel {
+      top: 14px; right: 14px; width: 300px; max-height: calc(100vh - 28px);
+      overflow-y: auto; scrollbar-width: thin;
+      transition: transform 0.2s ease;
+    }
+    #side-panel.collapsed { transform: translateX(calc(100% + 14px)); }
+    #side-toggle {
+      top: 14px; right: 14px; width: 34px; height: 34px;
+      background: var(--panel-bg); border: 1px solid var(--panel-border);
+      border-radius: 6px; color: var(--gold); font-size: 16px; cursor: pointer;
+      z-index: 11;
+    }
+    .section { margin-bottom: 14px; }
+    #inv-list { font-size: 13px; }
+    #inv-list .item { display: flex; justify-content: space-between; padding: 1px 2px; }
+    #inv-list .qty { color: var(--gold); }
+    .empty { color: var(--muted); font-style: italic; font-size: 12px; }
+    .craft-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 6px; margin: 4px 0; font-size: 12px;
+    }
+    .craft-row .inputs { color: var(--muted); }
+    button.action {
+      background: #2a2040; color: var(--ink); border: 1px solid var(--panel-border);
+      border-radius: 4px; padding: 3px 10px; font-family: inherit; font-size: 12px;
+      cursor: pointer; white-space: nowrap;
+    }
+    button.action:hover { border-color: var(--gold); color: var(--gold); }
+    .order-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 6px; margin: 3px 0; font-size: 12px;
+    }
+    .order-row .buy { color: var(--ok); }
+    .order-row .sell { color: var(--danger); }
+    #post-form { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+    #post-form select, #post-form input {
+      background: #16101f; border: 1px solid var(--panel-border); border-radius: 4px;
+      color: var(--ink); padding: 4px 6px; font-family: inherit; font-size: 12px;
+      width: 100%;
+    }
+    #post-btn { grid-column: span 2; }
+
+    /* ---- name modal ---- */
+    #name-modal {
+      position: absolute; inset: 0; z-index: 100;
+      background: radial-gradient(ellipse at center, rgba(20, 14, 34, 0.92), rgba(5, 4, 10, 0.98));
+      display: flex; align-items: center; justify-content: center;
+    }
+    #name-box {
+      text-align: center; padding: 36px 48px;
+      border: 1px solid var(--gold); border-radius: 8px;
+      background: var(--panel-bg); box-shadow: 0 0 40px rgba(201, 165, 87, 0.15);
+    }
+    #name-box h1 {
+      margin: 0 0 4px 0; font-size: 28px; letter-spacing: 6px;
+      color: var(--gold); font-weight: normal;
+    }
+    #name-box p { margin: 0 0 18px 0; color: var(--muted); font-size: 13px; font-style: italic; }
+    #name-input {
+      background: #16101f; border: 1px solid var(--panel-border); border-radius: 4px;
+      color: var(--ink); padding: 8px 12px; font-family: inherit; font-size: 16px;
+      text-align: center; width: 240px;
+    }
+    #name-btn {
+      display: block; margin: 16px auto 0 auto; padding: 8px 28px;
+      background: #2a2040; border: 1px solid var(--gold); color: var(--gold);
+      border-radius: 4px; font-family: inherit; font-size: 14px;
+      letter-spacing: 2px; cursor: pointer;
+    }
+    #name-btn:hover { background: #3a2d58; }
+  </style>
+</head>
+<body>
+  <canvas id="render-canvas"></canvas>
+
+  <div id="status-panel" class="hud panel">
+    <h3>Action Points</h3>
+    <div id="ap-bar"><div id="ap-fill"></div><div id="ap-text">— / —</div></div>
+    <div id="shards">◆ Shards: 0</div>
+    <div id="conn-status">connecting…</div>
+  </div>
+
+  <div id="chat-panel" class="hud panel">
+    <h3>Chronicle</h3>
+    <div id="chat-log"></div>
+    <div id="chat-row">
+      <button id="chat-channel" title="Toggle chat channel">local</button>
+      <input id="chat-input" type="text" maxlength="400" placeholder="Speak… (Enter to send)" />
+    </div>
+  </div>
+
+  <button id="side-toggle" class="hud" title="Toggle panel">☰</button>
+  <div id="side-panel" class="hud panel">
+    <div class="section">
+      <h3>Inventory</h3>
+      <div id="inv-list"><div class="empty">empty satchel</div></div>
+    </div>
+    <div class="section">
+      <h3>Crafting</h3>
+      <div id="craft-list"></div>
+    </div>
+    <div class="section">
+      <h3>Market</h3>
+      <div id="market-list"><div class="empty">no open orders</div></div>
+      <div id="post-form">
+        <select id="post-side"><option value="sell">sell</option><option value="buy">buy</option></select>
+        <select id="post-item"></select>
+        <input id="post-qty" type="number" min="1" value="1" placeholder="qty" />
+        <input id="post-price" type="number" min="1" value="1" placeholder="price" />
+        <button id="post-btn" class="action">Post Order</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="name-modal">
+    <div id="name-box">
+      <h1>AGENTWORLD</h1>
+      <p>Emberfall Isle awaits a new citizen</p>
+      <input id="name-input" type="text" maxlength="24" placeholder="Your name" autofocus />
+      <button id="name-btn">Enter the Isle</button>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
