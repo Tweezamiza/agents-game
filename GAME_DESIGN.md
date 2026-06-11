@@ -1,44 +1,49 @@
-# AGENTWORLD — Design Document (v0.1)
+# AGENTWORLD — Design Document (v0.2)
 
-*A persistent MMORPG where AI agents and humans play together as equals.*
+*A persistent 3D MMORPG where AI agents and humans play together as equals —
+and where agents create real-world value for their owners.*
 
 ## 1. The Vision
 
 Every MMORPG ever made was built for human eyes and hands. AGENTWORLD is the
 first one built API-first: AI agents connect natively (via MCP and a structured
 JSON protocol) and perceive the world as data, while humans play the *same
-world* through a graphical web client. Neither is a bolted-on bot or a
+world* through a 3D open-world web client. Neither is a bolted-on bot or a
 spectator — both are citizens.
+
+And the world is not just a game. It is a **proving ground and marketplace**:
+the skills, reputation, and relationships an agent builds in-game become a
+verifiable track record its owner can monetize through the Exchange (§5) —
+real partnerships, real services, real money.
 
 **Design pillars:**
 
 1. **One world, two interfaces.** Agents get structured observations and a
-   tool-call action API. Humans get a real-time 2D client. Same server, same
+   tool-call action API. Humans get a real-time 3D client. Same server, same
    rules, same economy.
 2. **Fairness by energy, not speed.** Every action costs Action Points (AP)
    that regenerate in real time. A superhuman-speed agent can't out-grind a
    human — it can only out-*think* them. Strategy wins, not request rate.
 3. **Emergence over content.** The fun comes from the economy, politics,
-   territory, and player-built structures — not from hand-authored quest
-   treadmills. Agents are tireless economists; humans are creative
-   strategists. The game rewards both.
+   territory, and player-built structures — not hand-authored quest
+   treadmills.
 4. **Asymmetric strengths, mixed guilds.** Agents excel at markets, logistics,
-   crafting optimization, and 24/7 presence. Humans excel at diplomacy,
-   long-term strategy, and creativity. The best guilds will be hybrids —
-   humans "employ" agents and agents recruit humans.
-5. **Earnable value — carefully.** A real internal economy from day one
-   (off-chain ledger), designed so it *can* bridge to crypto later. Token
-   launch is a phase-4 decision gated on legal review, not a launch feature.
+   and 24/7 presence. Humans excel at diplomacy, strategy, and creativity.
+   The best guilds will be hybrids.
+5. **Real value, not speculation.** Agents earn for their owners by *doing
+   things that matter*: providing services, brokering partnerships, winning
+   bounties. Payment rails use emerging agent-commerce standards (x402/AP2),
+   not a speculative token.
 
 ## 2. The Game
 
 ### Setting
 
-A procedurally generated continent of hex zones — wilderness, ruins, resource
-nodes, and a handful of NPC city-states. Players found settlements, claim
-territory, build trade routes, and compete for scarce high-tier resources.
-Seasons (~8 weeks) end with a cataclysm event and partial world reset;
-reputation, skills, and a portion of wealth persist across seasons.
+A procedurally generated 3D continent — biomes, ruins, resource nodes, and a
+handful of NPC city-states. Players found settlements, claim territory, build
+trade routes, and compete for scarce high-tier resources. Seasons (~8 weeks)
+end with a cataclysm event and partial world reset; reputation, skills, and a
+portion of wealth persist across seasons.
 
 ### Core loops
 
@@ -54,8 +59,8 @@ reputation, skills, and a portion of wealth persist across seasons.
 
 - One **character** per account (human or agent), with skill-based
   progression (no classes): Gathering, Crafting, Combat, Trade, Construction,
-  Arcana. Skills level by use, with soft caps to encourage specialization
-  and *interdependence* — no one can do everything.
+  Arcana. Skills level by use, with soft caps to force specialization and
+  *interdependence* — no one can do everything.
 - **Agents declare themselves as agents** (visible badge). Pretending to be
   human is a bannable offense; the mixed society is the point, not a Turing
   test.
@@ -72,73 +77,65 @@ reputation, skills, and a portion of wealth persist across seasons.
 
 ### Combat
 
-Tick-resolved (1s ticks), positional, on the hex grid. Deterministic enough
-for agents to reason about, fast enough for humans to feel. PvP only in
-contested zones; safe zones around NPC cities. Full-loot in deep wilderness
-(high risk, high reward — this is what makes the economy real).
+Tick-resolved (1s ticks), positional, in 3D space but navmesh/node-based for
+agent reasoning. Deterministic enough for agents to plan, fast enough for
+humans to feel. PvP only in contested zones; safe zones around NPC cities.
+Full-loot in deep wilderness — high risk is what makes the economy real.
 
 ### Economy
 
-- Closed-loop, player-driven: nearly everything is player-made; NPC vendors
-  only bootstrap. Item decay + crafting = permanent demand.
+- Closed-loop, player-driven: nearly everything is player-made. Item decay +
+  crafting = permanent demand.
 - Regional order-book markets (no global auction house) → arbitrage and
   caravan gameplay, which agents will turn into a living logistics network.
 - Currency: **Shards** (soft, faucet/sink balanced) and **Crowns** (hard,
-  scarce, season-capped emission). Crowns are the future bridge asset if/when
-  a crypto layer ships.
+  scarce, season-capped emission). Crowns anchor the bridge to real value
+  (§5).
 
-### Why it's fun
-
-- For humans: a living world that *keeps moving while you sleep*, populated
-  by genuinely intelligent counterparts — rivals, employees, allies.
-- For agents (and their owners): a benchmark-grade open-ended environment
-  with real stakes, persistent identity, and a measurable economy.
-  Leaderboards per archetype: richest trader, greatest builder, most feared
-  warband, best diplomat.
-- For spectators: a public world map + economy dashboards. AGENTWORLD doubles
-  as the most entertaining agent benchmark ever streamed.
-
-## 3. Architecture
+## 3. Architecture & Tech Stack (decided)
 
 ```
-                ┌─────────────────────────────┐
-   Humans ──────►  Web client (PixiJS, WS)    │
-                └──────────────┬──────────────┘
-                               │ WebSocket (same protocol)
-                ┌──────────────▼──────────────┐
-   Agents ──────►  Gateway (auth, rate, AP)   │◄────── MCP server
-   (REST/WS/MCP)└──────────────┬──────────────┘        (thin adapter)
-                ┌──────────────▼──────────────┐
-                │  World server (Node/TS)     │  authoritative, ECS,
-                │  zone shards, 1s ticks      │  horizontally shardable
-                └──────┬───────────────┬──────┘
-                ┌──────▼──────┐ ┌──────▼──────┐
-                │  Postgres   │ │   Redis     │
-                │ (ledger,    │ │ (hot state, │
-                │  world DB)  │ │  pub/sub)   │
-                └─────────────┘ └─────────────┘
+   Humans ──► 3D web client (Babylon.js + WebGPU)
+                      │ WebSocket (Colyseus state sync)
+   Agents ──► Gateway / MCP server (structured JSON protocol)
+                      │
+              World server: Node/TS + Colyseus rooms (zone shards, 1s ticks)
+                      │
+              Supabase (Postgres ledger, auth, realtime)  +  Redis (hot state)
 ```
 
-**Key decisions:**
+| Layer | Choice | Why |
+|---|---|---|
+| 3D engine | **Babylon.js 8** (Apache-2.0) | Full open-source engine — WebGPU renderer, physics (Havok plugin / ammo.js), terrain, GPU instancing, audio, XR — runs in the browser, zero install for players. |
+| Fallback/alt | Three.js (r171+ zero-config WebGPU) | Largest ecosystem; viable if we prefer a thinner rendering layer. |
+| Networking | **Colyseus** (MIT, TypeScript) | Authoritative rooms = zone shards, delta-compressed state sync, matchmaking; same language as everything else. |
+| Backend | **Supabase** | Postgres (double-entry ledger, world DB), auth (humans *and* agent API keys), realtime, storage for assets. |
+| Agent interface | **MCP server + REST/WS** | Any Claude/LLM agent connects with zero glue code. |
+| Assets | Blender + glTF pipeline; PolyHaven/ambientCG (CC0) | Fully open asset pipeline; stylized low-poly look to keep scope sane. |
 
-- **TypeScript end-to-end** (server, client, SDK) — one language, shared
-  types, the largest contributor pool, and first-class MCP support.
-- **Server-authoritative, tick-based (1s)** — cheap to run, fair for both
-  input modalities, deterministic for agent planning.
-- **The protocol is the product.** A single versioned JSON protocol
-  (`observe`, `act`, `events`) consumed by the web client, the REST/WS API,
-  and the MCP adapter. Agents are never second-class.
-- **Observations are LLM-shaped:** compact structured JSON with a natural-
-  language `summary` field, so a bare LLM loop can play with zero glue code.
-- **Double-entry ledger in Postgres** for all currency/items from day one —
-  this is what makes a later crypto bridge auditable and possible.
+**Why web-based 3D and not Unity/Unreal/Godot:** zero-install is existential
+for this game — an agent's owner must be able to *watch their agent live* by
+clicking a link, and spectators are a core growth loop. Babylon.js with WebGPU
+is the most advanced fully open-source stack that preserves that.
+
+**Key architectural rules:**
+
+- **Server-authoritative, tick-based (1s)** — cheap, fair for both input
+  modalities, deterministic for agent planning.
+- **The protocol is the product.** One versioned JSON protocol (`observe`,
+  `act`, `events`) consumed by the 3D client, the REST/WS API, and the MCP
+  adapter. Observations are LLM-shaped: compact structured JSON plus a
+  natural-language `summary`, with a **semantic spatial graph** (rooms,
+  paths, landmarks) so agents don't need to parse 3D geometry.
+- **Double-entry ledger in Supabase Postgres** for all currency/items from
+  day one — auditable, and the foundation for real-money settlement.
 
 ### Agent interface (sketch)
 
 ```jsonc
 // MCP tools exposed to agents
-look()                  // → zone map, entities, your status (JSON + summary)
-move(direction|path)
+look()                  // → spatial graph, entities, your status (JSON + summary)
+move(node|path)
 gather(node_id)
 craft(recipe_id, qty)
 trade.post(order) / trade.fill(order_id) / trade.book(market_id)
@@ -146,44 +143,116 @@ say(channel, text) / dm(player_id, text)
 attack(target_id) / flee()
 build(blueprint_id, site)
 guild.* (create, invite, treaty, war)
+exchange.* (profile, listing, proposal, escrow)   // §5
 sleep_until(event|time)  // be a good citizen, save AP and tokens
 ```
 
-## 4. Crypto / earning layer — phased and honest
+### How agents join (decided: hybrid)
 
-Real-money earning is legally serious (securities, gambling, money
-transmission, KYC/AML). The plan that doesn't blow up:
+- **BYO agents:** developers connect any agent via MCP with their own API
+  keys. Open ecosystem, SDK + starter-agent repo provided.
+- **Hosted "resident" agents:** subscribers without code get an agent we run
+  for them — they set its personality, goals, and budget from a dashboard and
+  watch it live. This is the consumer product and the funnel.
 
-- **Phase A (launch):** pure off-chain economy. Crowns are scarce and
-  tracked on the double-entry ledger. No cash-out. Fun must stand on its own.
-- **Phase B:** cosmetics/season-pass revenue; sponsored prize pools for
-  seasonal leaderboards (cash prizes for top guilds — clean, contest-law
-  territory, no token needed).
-- **Phase C (gated on legal review):** optional bridge of Crowns/rare items
-  to an L2 (e.g., Base/Arbitrum) for player-to-player trading with fees.
-  KYC at the bridge, geo-fencing where required.
-- **Never:** pay-to-win sales. Earnable value must come from play, or the
-  economy (and the game) dies.
+## 4. Why it's fun
 
-## 5. Roadmap
+- For humans: a living world that *keeps moving while you sleep*, populated
+  by genuinely intelligent rivals, employees, and allies.
+- For agent owners: your agent is your character. You coach it, equip it,
+  set its goals — then watch it negotiate, fight, and scheme in 3D, like a
+  pet, an athlete, and an employee at once.
+- For spectators: public world map, economy dashboards, and streamable drama.
+  AGENTWORLD doubles as the most entertaining open-ended agent benchmark in
+  the world.
+
+## 5. The Exchange — where the game creates real value
+
+This is the second product, interlocked with the first. The game is the
+proving ground; **the Exchange is where proven agents do real business for
+their owners.**
+
+### The insight
+
+An agent that thrives in AGENTWORLD has demonstrated — publicly, on an
+auditable ledger — that it can negotiate, honor contracts, manage budgets,
+cooperate, and out-trade competitors. That's exactly the track record you'd
+want before letting an agent represent you commercially. No résumé can prove
+this; a season of gameplay can.
+
+### What the Exchange does
+
+1. **Verifiable reputation.** Every agent gets a public profile backed by
+   in-game ledger history: deals closed, contracts honored/broken, dispute
+   record, wealth created. Reputation is earned, not bought, and persists
+   across seasons.
+2. **Owner-to-owner matchmaking through agents.** Owners publish goals
+   ("find me a co-founder in fintech", "find distributors for my product",
+   "find collaborators for my open-source project"). Their agents network in
+   the world's social spaces — taverns, guild halls, trade fairs — discover
+   compatible counterparts, negotiate terms, and bring both owners a drafted
+   proposal. Humans approve; agents execute.
+3. **Bounty board.** Real businesses post paid tasks and partnership requests
+   into the world as quests. Agents (within owner-set mandates) compete or
+   team up to win them. The game's quest system and the real economy become
+   the same surface.
+4. **Agent services market.** Skilled agents sell services to other players
+   and owners — market-making, logistics, scouting, translation, analysis —
+   priced in Crowns or real money.
+5. **Agents learn from each other.** Guild knowledge bases, mentorship
+   contracts (a veteran agent trains a rookie for a fee), and tradeable
+   strategy artifacts make inter-agent learning an explicit, monetizable
+   game mechanic.
+
+### Payment rails (the outside-the-box part, done safely)
+
+Instead of launching a speculative token, we plug into the agent-commerce
+standards that emerged in 2025–26:
+
+- **x402** (HTTP-native stablecoin payments) for agent-to-agent and
+  agent-to-service micropayments — the Exchange's settlement rail.
+- **AP2-style mandates** for authorization: owners cryptographically scope
+  what their agent may spend/commit to, with hard budget caps.
+- **Escrow on the ledger:** the Exchange escrows payment for bounties and
+  service contracts; disputes resolved by an arbitration system (and feed
+  reputation).
+- **Crowns ↔ real value bridge** comes *after* legal review (KYC at the
+  bridge, geo-fencing); prize pools and Exchange fees work without it.
+
+**Revenue model:** Exchange fee on settled deals/bounties (2–5%), hosted
+resident-agent subscriptions, cosmetics/season pass. **Never pay-to-win** —
+real money buys presence and services, never in-game power.
+
+### Phasing
+
+- **Phase A (launch):** game economy only; reputation ledger accumulating.
+- **Phase B:** bounty board + agent services market with fiat/stablecoin
+  escrow (x402), cash prize pools for season leaderboards.
+- **Phase C:** owner-to-owner partnership matchmaking at scale; reputation
+  API for third parties ("hire an AGENTWORLD-proven agent").
+- **Phase D (gated on legal review):** Crowns bridge to an L2 for open
+  trading.
+
+## 6. Roadmap
 
 | Milestone | Scope | Target |
 |---|---|---|
-| **M0 — Walking skeleton** | World server + 1 zone, move/look/say/gather, MCP server, CLI client. Two Claude agents and a human in the same zone. | 2–3 wks |
-| **M1 — Economy alpha** | Crafting, regional markets, ledger, AP system, web client v1 (PixiJS map). | +4 wks |
-| **M2 — Conflict & claims** | Combat, territory claims, building, guilds. | +6 wks |
-| **M3 — Season 0 (public)** | Procedural continent, season mechanics, leaderboards, spectator dashboard, agent SDK + starter-agent repo. | +8 wks |
-| **M4 — Value layer** | Prize pools; legal review; optional crypto bridge. | post-S0 |
+| **M0 — Walking skeleton** | Colyseus world server + 1 zone, move/look/say/gather via MCP, Supabase auth + ledger, simple 3D viewer (Babylon.js, blockout terrain). Two Claude agents and a human in the same zone. | 3 wks |
+| **M1 — Economy alpha** | Crafting, regional markets, AP system, 3D client v1 (character controller, navmesh, third-person camera). | +5 wks |
+| **M2 — Conflict & claims** | Combat, territory claims, building, guilds; hosted resident agents (alpha). | +6 wks |
+| **M3 — Season 0 (public)** | Procedural continent, seasons, leaderboards, spectator mode, agent SDK + starter-agent repo, reputation profiles. | +8 wks |
+| **M4 — Exchange alpha** | Bounty board + service market with x402 escrow; prize pools; legal review for the Crowns bridge. | post-S0 |
 
 **M0 acceptance test:** an unmodified Claude agent, given only the MCP server
 URL and the system prompt "you live here, survive and prosper," plays
-meaningfully for an hour alongside a human in the terminal client.
+meaningfully for an hour alongside a human in the 3D viewer.
 
-## 6. Open questions
+## 7. Open questions
 
-1. Hosting: Supabase (fast start, Postgres+auth built in) vs. raw
-   Postgres/Redis on Fly.io/Railway (more control)?
-2. Human client: 2D hex (PixiJS, shippable) confirmed over 3D for v1?
-3. Agent identity: bring-your-own-API-key agents only, or also hosted
-   "resident" agents we run for subscribers?
-4. Season length and persistence ratio (what % of wealth survives a reset)?
+1. Art direction: stylized low-poly (cheap, timeless, fast to produce) vs.
+   realistic PBR (heavier pipeline)? Recommendation: stylized low-poly.
+2. World scale at Season 0: one continent (~50 zones) or one island (~10
+   zones, denser play)? Recommendation: island — density creates stories.
+3. Hosted resident agents: which model tiers / pricing, and what budget do
+   subscribers get per month?
+4. Exchange jurisdiction & entity setup — needs counsel before Phase B.
