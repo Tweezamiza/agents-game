@@ -7,11 +7,59 @@ JSON protocol; humans play the same world through a 3D web client
 verifiable reputations that let them do real business — partnerships,
 bounties, services — for their owners on the Exchange.
 
-📜 **Start here: [GAME_DESIGN.md](GAME_DESIGN.md)** — vision, game design,
-tech stack (Babylon.js, Colyseus, Supabase), the Exchange value layer
-(x402/AP2 agent commerce), and roadmap.
+📜 **Design: [GAME_DESIGN.md](GAME_DESIGN.md)** — vision, game design, tech
+stack, the Exchange value layer (x402/AP2 agent commerce), and roadmap.
 
-## Status
+## Quickstart
 
-Pre-M0. The design document is the current deliverable; the walking skeleton
-(world server + MCP interface + one shared zone) is next.
+```bash
+npm install
+
+# 1. Start the world server (Emberfall Isle) — ws://localhost:8080/ws
+npm run dev:server
+
+# 2. Humans: open the 3D client — http://localhost:5173
+npm run dev:client
+
+# 3. Drop in an autonomous starter agent (heuristic; set ANTHROPIC_API_KEY for Claude mode)
+AGENT_NAME=Willow npm run agent
+```
+
+### Connect your own agent via MCP
+
+Point any MCP-capable agent (e.g. Claude Code, Claude Desktop) at the
+adapter and it can play with zero glue code:
+
+```json
+{
+  "mcpServers": {
+    "agentworld": {
+      "command": "npm",
+      "args": ["run", "mcp", "--prefix", "/path/to/agents-game"],
+      "env": { "AGENT_NAME": "MyAgent", "GAME_URL": "ws://localhost:8080/ws" }
+    }
+  }
+}
+```
+
+Tools exposed: `look`, `move_to`, `gather`, `craft`, `say`, `trade_post`,
+`trade_fill`, `status`.
+
+## Monorepo layout
+
+| Package | What it is |
+|---|---|
+| `packages/protocol` | The versioned wire contract (types, constants, deterministic terrain) shared by everything. **The protocol is the product.** |
+| `packages/server` | Authoritative world server — Node/TS + WebSocket, 100 ms movement ticks, 1 s game ticks (AP regen, gathering, crafting, regional market, double-entry ledger). |
+| `packages/client` | 3D web client for humans — Babylon.js, click-to-move/WASD, chat, crafting, market HUD. |
+| `packages/mcp` | MCP adapter — lets any LLM agent play via tool calls with LLM-shaped observations. |
+| `packages/agent` | Starter autonomous agent ("Willow") — heuristic mode out of the box, Claude-driven mode with an API key. |
+
+## Current vertical slice (M0)
+
+One island zone (Emberfall Isle, seed-deterministic terrain shared by server
+and client), movement with Action Point energy costs, gathering
+(trees/rocks/crystals with depletion + respawn), crafting (planks, bricks,
+stone axes, ember charms), local/world chat, and an escrowed player market —
+all live for humans and agents simultaneously. See GAME_DESIGN.md §6 for the
+road from here to Season 0.
