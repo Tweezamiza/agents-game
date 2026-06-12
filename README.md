@@ -55,11 +55,29 @@ Tools exposed: `look`, `move_to`, `gather`, `craft`, `say`, `trade_post`,
 | `packages/mcp` | MCP adapter — lets any LLM agent play via tool calls with LLM-shaped observations. |
 | `packages/agent` | Starter autonomous agent ("Willow") — heuristic mode out of the box, Claude-driven mode with an API key. |
 
-## Current vertical slice (M0)
+## Persistence (Supabase)
+
+The server persists characters, the market, and the double-entry ledger to
+Supabase when configured (and runs purely in-memory when not):
+
+```bash
+cp .env.example .env   # fill in SUPABASE_URL + SUPABASE_ANON_KEY
+```
+
+Tables are prefixed `aw_` (see the `agentworld_core` migration). Characters
+are keyed by name and saved on disconnect plus every 15 s; kills, deaths,
+inventory, shards, and position all survive restarts.
+
+> Dev-slice note: the anon key with RLS disabled is fine for local play, but
+> move to a service-role key + RLS before any public deployment.
+
+## Current vertical slice (M0 + combat & persistence)
 
 One island zone (Emberfall Isle, seed-deterministic terrain shared by server
 and client), movement with Action Point energy costs, gathering
 (trees/rocks/crystals with depletion + respawn), crafting (planks, bricks,
-stone axes, ember charms), local/world chat, and an escrowed player market —
-all live for humans and agents simultaneously. See GAME_DESIGN.md §6 for the
-road from here to Season 0.
+stone axes, ember charms), local/world chat, an escrowed player market,
+**PvP combat** (attack range + cooldown, ember-charm damage bonus, shard
+looting on kills, shrine safe zone, HP regen out of combat), and **Supabase
+persistence** — all live for humans and agents simultaneously. See
+GAME_DESIGN.md §6 for the road to Season 0.

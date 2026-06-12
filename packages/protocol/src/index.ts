@@ -8,7 +8,7 @@
  * `observe` on demand and receive LLM-shaped observations).
  */
 
-export const PROTOCOL_VERSION = "0.1.0";
+export const PROTOCOL_VERSION = "0.2.0";
 
 // ---------------------------------------------------------------------------
 // World constants
@@ -40,6 +40,26 @@ export const AP_COST = {
   CRAFT: 10,
   MARKET_ORDER: 1,
   SAY: 0,
+  ATTACK: 8,
+} as const;
+
+export const COMBAT = {
+  HP_MAX: 100,
+  /** HP regenerated per game tick once out of combat. */
+  HP_REGEN: 2,
+  /** Seconds without taking/dealing damage before regen kicks in. */
+  REGEN_DELAY_S: 8,
+  ATTACK_RANGE: 2.5,
+  /** Base damage; ember_charm in inventory adds CHARM_BONUS. */
+  DAMAGE_MIN: 8,
+  DAMAGE_MAX: 14,
+  CHARM_BONUS: 4,
+  /** Game ticks between attacks per player. */
+  COOLDOWN_TICKS: 2,
+  /** No PvP within this radius of the island's central spawn shrine. */
+  SAFE_ZONE_RADIUS: 14,
+  /** Fraction of the victim's shards looted by the killer. */
+  LOOT_SHARD_FRACTION: 0.25,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -97,6 +117,8 @@ export interface PlayerPublic {
   facing: Vec2;
   /** True while a gather/craft action is in progress. */
   busy: boolean;
+  hp: number;
+  hpMax: number;
 }
 
 export interface PlayerPrivate extends PlayerPublic {
@@ -104,6 +126,10 @@ export interface PlayerPrivate extends PlayerPublic {
   apMax: number;
   shards: number;
   inventory: Partial<Record<ItemId, number>>;
+  kills: number;
+  deaths: number;
+  /** True while inside the central no-PvP shrine zone. */
+  inSafeZone: boolean;
 }
 
 export interface ResourceNode {
@@ -180,6 +206,11 @@ export interface ObserveMsg {
   type: "observe";
 }
 
+export interface AttackMsg {
+  type: "attack";
+  targetId: string;
+}
+
 export type ClientMsg =
   | JoinMsg
   | MoveMsg
@@ -189,7 +220,8 @@ export type ClientMsg =
   | SayMsg
   | TradePostMsg
   | TradeFillMsg
-  | ObserveMsg;
+  | ObserveMsg
+  | AttackMsg;
 
 // ---------------------------------------------------------------------------
 // Server → Client messages
@@ -246,6 +278,18 @@ export interface ErrorMsg {
   message: string;
 }
 
+/** Broadcast to everyone near a fight; drives client combat feedback. */
+export interface CombatEvent {
+  type: "combat";
+  attacker: { id: string; name: string };
+  target: { id: string; name: string };
+  damage: number;
+  targetHp: number;
+  killed: boolean;
+  /** Shards looted by the attacker when killed is true. */
+  loot?: number;
+}
+
 /**
  * LLM-shaped observation: everything an agent needs to decide its next
  * action, with a natural-language summary so a bare LLM loop can play.
@@ -269,7 +313,11 @@ export type ServerMsg =
   | NodeUpdateMsg
   | MarketUpdateMsg
   | ErrorMsg
-  | ObservationMsg;
+  | ObservationMsg
+  | CombatEvent;
+
+/** Centre of the island — the spawn shrine anchoring the no-PvP zone. */
+export const SAFE_ZONE_CENTER: Vec2 = { x: WORLD.SIZE / 2, z: WORLD.SIZE / 2 };
 
 // ---------------------------------------------------------------------------
 // Terrain — deterministic heightmap shared by server (collision/spawn) and

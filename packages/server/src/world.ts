@@ -1,6 +1,8 @@
 import {
   AP_COST,
+  COMBAT,
   ItemId,
+  SAFE_ZONE_CENTER,
   MarketOrder,
   PlayerPrivate,
   PlayerPublic,
@@ -46,6 +48,20 @@ export interface Player {
   shards: number;
   inventory: Partial<Record<ItemId, number>>;
   gather: GatherJob | null;
+  hp: number;
+  kills: number;
+  deaths: number;
+  /** Game ticks until this player may attack again. */
+  attackCooldown: number;
+  /** Game ticks since last combat involvement (for HP regen delay). */
+  ticksSinceCombat: number;
+}
+
+export interface CombatOutcome extends ActionOutcome {
+  damage?: number;
+  targetHp?: number;
+  killed?: boolean;
+  loot?: number;
 }
 
 export interface LedgerEntry {
@@ -110,23 +126,71 @@ export class World {
     return { x: WORLD.SIZE / 2, z: WORLD.SIZE / 2 };
   }
 
-  addPlayer(name: string, role: Role): Player {
+  addPlayer(name: string, role: Role, restore?: Partial<Player>): Player {
     const id = `p-${this.nextId++}`;
     const player: Player = {
       id,
       name,
       role,
-      pos: this.spawnPoint(),
+      pos: restore?.pos ?? this.spawnPoint(),
       facing: { x: 0, z: 1 },
       target: null,
       walkDebt: 0,
-      ap: WORLD.AP_MAX,
-      shards: 100,
-      inventory: {},
+      ap: restore?.ap ?? WORLD.AP_MAX,
+      shards: restore?.shards ?? 100,
+      inventory: restore?.inventory ?? {},
       gather: null,
+      hp: restore?.hp ?? COMBAT.HP_MAX,
+      kills: restore?.kills ?? 0,
+      deaths: restore?.deaths ?? 0,
+      attackCooldown: 0,
+      ticksSinceCombat: COMBAT.REGEN_DELAY_S,
     };
+    if (player.hp <= 0) player.hp = COMBAT.HP_MAX;
+    // Never restore into the sea (e.g. saved mid-walk near the shore).
+    if (terrainHeight(player.pos.x, player.pos.z, this.seed) <= 0.2) player.pos = this.spawnPoint();
     this.players.set(id, player);
     return player;
+  }
+
+  inSafeZone(pos: Vec2): boolean {
+    return distance(pos, SAFE_ZONE_CENTER) <= COMBAT.SAFE_ZONE_RADIUS;
+  }
+
+  attack(p: Player, targetId: string): CombatOutcome {
+    const target = this.players.get(targetId);
+    if (!target) return { ok: false, message: `No such player: ${targetId}` };
+    if (target.id === p.id) return { ok: false, message: "You cannot attack yourself." };
+    if (p.attackCooldown > 0) return { ok: false, message: "Attack on cooldown; wait a moment." };
+    if (p.ap < AP_COST.ATTACK) return { ok: false, message: `Not enough AP (${p.ap}/${AP_COST.ATTACK}).` };
+    if (distance(p.pos, target.pos) > COMBAT.ATTACK_RANGE)
+      return { ok: false, message: `Too far away (${distance(p.pos, target.pos).toFixed(1)} > ${COMBAT.ATTACK_RANGE}). Close the distance first.` };
+    if (this.inSafeZone(p.pos) || this.inSafeZone(target.pos))
+      return { ok: false, message: "The shrine's peace holds here — no violence in the safe zone." };
+
+    p.ap -= AP_COST.ATTACK;
+    p.attackCooldown = COMBAT.COOLDOWN_TICKS;
+    p.ticksSinceCombat = 0;
+    target.ticksSinceCombat = 0;
+    const charm = (p.inventory.ember_charm ?? 0) > 0 ? COMBAT.CHARM_BONUS : 0;
+    const damage =
+      COMBAT.DAMAGE_MIN + Math.floor(Math.random() * (COMBAT.DAMAGE_MAX - COMBAT.DAMAGE_MIN + 1)) + charm;
+    target.hp -= damage;
+    target.gather = null; // taking a hit interrupts gathering
+
+    if (target.hp <= 0) {
+      const loot = Math.floor(target.shards * COMBAT.LOOT_SHARD_FRACTION);
+      target.shards -= loot;
+      p.shards += loot;
+      p.kills++;
+      target.deaths++;
+      target.hp = COMBAT.HP_MAX;
+      target.pos = this.spawnPoint();
+      target.target = null;
+      this.log("combat", target.id, p.id, "shards", loot, `${p.name} slew ${target.name}`);
+      return { ok: true, message: `You slew ${target.name} and looted ${loot} shards!`, damage, targetHp: 0, killed: true, loot };
+    }
+    return { ok: true, message: `Hit ${target.name} for ${damage} (${target.hp}/${COMBAT.HP_MAX} HP left).`, damage, targetHp: target.hp, killed: false };
   }
 
   removePlayer(id: string) {
@@ -187,6 +251,10 @@ export class World {
 
     for (const p of this.players.values()) {
       p.ap = Math.min(WORLD.AP_MAX, p.ap + WORLD.AP_REGEN);
+      if (p.attackCooldown > 0) p.attackCooldown--;
+      p.ticksSinceCombat++;
+      if (p.ticksSinceCombat >= COMBAT.REGEN_DELAY_S && p.hp < COMBAT.HP_MAX)
+        p.hp = Math.min(COMBAT.HP_MAX, p.hp + COMBAT.HP_REGEN);
       if (p.gather) {
         p.gather.ticksLeft--;
         if (p.gather.ticksLeft <= 0) {
@@ -332,7 +400,16 @@ export class World {
   }
 
   publicView(p: Player): PlayerPublic {
-    return { id: p.id, name: p.name, role: p.role, pos: p.pos, facing: p.facing, busy: !!p.gather };
+    return {
+      id: p.id,
+      name: p.name,
+      role: p.role,
+      pos: p.pos,
+      facing: p.facing,
+      busy: !!p.gather,
+      hp: p.hp,
+      hpMax: COMBAT.HP_MAX,
+    };
   }
 
   privateView(p: Player): PlayerPrivate {
@@ -342,6 +419,9 @@ export class World {
       apMax: WORLD.AP_MAX,
       shards: p.shards,
       inventory: { ...p.inventory },
+      kills: p.kills,
+      deaths: p.deaths,
+      inSafeZone: this.inSafeZone(p.pos),
     };
   }
 
@@ -356,17 +436,21 @@ export class World {
       .map((n) => `${n.id} (${n.kind}, ${n.remaining} left, ${distance(p.pos, n.pos).toFixed(0)}u away)`)
       .join("; ") || "none in sight";
     const playerStr = others
-      .map((o) => `${o.name} [${o.role}] ${distance(p.pos, o.pos).toFixed(0)}u away`)
+      .map((o) => `${o.name} (${o.id}) [${o.role}] ${distance(p.pos, o.pos).toFixed(0)}u away, ${o.hp}/${o.hpMax} HP`)
       .join("; ") || "nobody nearby";
     const orderStr = [...this.orders.values()]
       .slice(0, 6)
       .map((o) => `${o.id}: ${o.ownerName} ${o.side}s ${o.qty} ${o.item} @ ${o.price}`)
       .join("; ") || "no open orders";
+    const safety = this.inSafeZone(p.pos)
+      ? "You are inside the shrine's safe zone (no PvP)."
+      : "You are in the open wilds — PvP is possible here.";
     return (
       `You are ${p.name} at (${p.pos.x.toFixed(0)}, ${p.pos.z.toFixed(0)}) on Emberfall Isle. ` +
-      `AP ${Math.floor(p.ap)}/${WORLD.AP_MAX}, ${p.shards} shards. Inventory: ${inv}. ` +
+      `HP ${p.hp}/${COMBAT.HP_MAX}, AP ${Math.floor(p.ap)}/${WORLD.AP_MAX}, ${p.shards} shards (K/D ${p.kills}/${p.deaths}). ` +
+      `Inventory: ${inv}. ${safety} ` +
       `Nearby resources: ${nodeStr}. Nearby citizens: ${playerStr}. Market: ${orderStr}. ` +
-      `Actions: move, gather, craft (${RECIPES.map((r) => r.id).join("/")}), say, trade_post, trade_fill.`
+      `Actions: move, gather, craft (${RECIPES.map((r) => r.id).join("/")}), say, trade_post, trade_fill, attack (range ${COMBAT.ATTACK_RANGE}, not in safe zone).`
     );
   }
 

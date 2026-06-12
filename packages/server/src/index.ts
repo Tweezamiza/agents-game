@@ -9,12 +9,15 @@ import {
   distance,
 } from "@agentworld/protocol";
 import { Player, World } from "./world.js";
+import { Persistence } from "./persistence.js";
 
 const PORT = Number(process.env.PORT ?? 8080);
 const SEED = Number(process.env.WORLD_SEED ?? 1337);
 
 const world = new World(SEED);
 const sockets = new Map<string, WebSocket>(); // playerId -> socket
+const persistence = new Persistence();
+let ledgerFlushed = 0;
 
 const http = createServer((req, res) => {
   if (req.url === "/health") {
@@ -57,7 +60,7 @@ function observation(p: Player): ObservationMsg {
 wss.on("connection", (ws) => {
   let player: Player | null = null;
 
-  ws.on("message", (raw) => {
+  ws.on("message", async (raw) => {
     let msg: ClientMsg;
     try {
       msg = JSON.parse(raw.toString());
@@ -76,8 +79,14 @@ wss.on("connection", (ws) => {
         send(ws, { type: "error", message: "join.name is required." });
         return;
       }
+      if ([...world.players.values()].some((p) => p.name === name)) {
+        send(ws, { type: "error", message: `"${name}" is already on the isle. Pick another name.` });
+        return;
+      }
       const role = msg.role === "agent" ? "agent" : "human";
-      player = world.addPlayer(name, role);
+      const saved = await persistence.loadCharacter(name);
+      if (player) return; // a parallel join on this socket won the race
+      player = world.addPlayer(name, role, saved ? persistence.restoreToPlayer(saved) : undefined);
       sockets.set(player.id, ws);
       send(ws, {
         type: "welcome",
@@ -150,6 +159,30 @@ wss.on("connection", (ws) => {
       case "observe":
         send(ws, observation(p));
         return;
+      case "attack": {
+        const target = world.players.get(String(msg.targetId));
+        const r = world.attack(p, String(msg.targetId));
+        send(ws, { type: "action_result", action: "attack", ok: r.ok, message: r.message, self: world.privateView(p) });
+        if (r.ok && target) {
+          broadcast({
+            type: "combat",
+            attacker: { id: p.id, name: p.name },
+            target: { id: target.id, name: target.name },
+            damage: r.damage ?? 0,
+            targetHp: r.targetHp ?? target.hp,
+            killed: r.killed ?? false,
+            loot: r.loot,
+          });
+          const targetWs = sockets.get(target.id);
+          if (targetWs) {
+            const note = r.killed
+              ? `You were slain by ${p.name} and lost ${r.loot ?? 0} shards. You wake at the shrine.`
+              : `${p.name} hit you for ${r.damage} (${target.hp}/100 HP). Fight back or flee!`;
+            send(targetWs, { type: "action_result", action: "attack", ok: false, message: note, self: world.privateView(target) });
+          }
+        }
+        return;
+      }
       default:
         send(ws, { type: "error", message: `Unknown message type: ${(msg as { type?: string }).type}` });
     }
@@ -158,6 +191,7 @@ wss.on("connection", (ws) => {
   ws.on("close", () => {
     if (player) {
       console.log(`leave: ${player.name} (${player.id})`);
+      void persistence.saveCharacter(player);
       world.removePlayer(player.id);
       sockets.delete(player.id);
       broadcast({ type: "chat", channel: "world", from: { id: "system", name: "Emberfall", role: "human" }, text: `${player.name} left the isle.` });
@@ -187,7 +221,22 @@ setInterval(() => {
   for (const node of respawned) broadcast({ type: "node_update", node });
 }, WORLD.GAME_TICK_MS);
 
-http.listen(PORT, () => {
+// Persistence sweep every 15 s: save all online characters, flush ledger.
+setInterval(() => {
+  if (!persistence.enabled) return;
+  for (const p of world.players.values()) void persistence.saveCharacter(p);
+  persistence.queueLedger(world.ledger.slice(ledgerFlushed));
+  ledgerFlushed = world.ledger.length;
+  void persistence.flushLedger();
+}, 15_000);
+
+http.listen(PORT, async () => {
   console.log(`AGENTWORLD server v${PROTOCOL_VERSION} — Emberfall Isle (seed ${SEED})`);
   console.log(`ws://localhost:${PORT}/ws  |  http://localhost:${PORT}/health`);
+  if (persistence.enabled) {
+    const ok = await persistence.ping();
+    console.log(ok ? "persistence: Supabase connected — characters and ledger persist" : "persistence: Supabase configured but unreachable — running in-memory");
+  } else {
+    console.log("persistence: no SUPABASE_URL/SUPABASE_ANON_KEY — running in-memory");
+  }
 });
