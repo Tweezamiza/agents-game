@@ -75,8 +75,8 @@ const CHARACTERS: Record<"human" | "agent", CharacterSpec> = {
   },
 };
 
-/** World-boss character model (KayKit Skeletons pack), rendered by MobLayer. */
-const BOSS_URL = `${ASSETS}/characters/Skeleton_Warrior.glb`;
+/** World-boss model: KayKit skeleton re-baked obsidian-dark with ember eyes. */
+const BOSS_URL = `${ASSETS}/characters/Bonelord_Vekk.glb`;
 
 interface PropSpec {
   url: string;
