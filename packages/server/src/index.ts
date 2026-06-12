@@ -2,9 +2,12 @@ import { createServer } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import {
   ClientMsg,
+  EquipSlot,
+  ItemId,
   ObservationMsg,
   PROTOCOL_VERSION,
   ServerMsg,
+  StructureKind,
   WORLD,
   distance,
 } from "@agentworld/protocol";
@@ -22,7 +25,7 @@ let ledgerFlushed = 0;
 const http = createServer((req, res) => {
   if (req.url === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true, players: world.players.size, protocol: PROTOCOL_VERSION }));
+    res.end(JSON.stringify({ ok: true, players: world.players.size, mobs: world.mobs.size, protocol: PROTOCOL_VERSION }));
     return;
   }
   res.writeHead(404);
@@ -44,6 +47,17 @@ function broadcast(msg: ServerMsg, filter?: (p: Player) => boolean) {
   }
 }
 
+/** Deliver messages the simulation queued (combat, events, notes). */
+function flushOutbox() {
+  for (const { to, msg } of world.drainOutbox()) {
+    if (to === "all") broadcast(msg);
+    else {
+      const ws = sockets.get(to);
+      if (ws) send(ws, msg);
+    }
+  }
+}
+
 function observation(p: Player): ObservationMsg {
   return {
     type: "observation",
@@ -54,6 +68,10 @@ function observation(p: Player): ObservationMsg {
     nearbyNodes: world.nearbyNodes(p),
     market: [...world.orders.values()],
     recipes: world.recipes(),
+    nearbyMobs: world.nearbyMobs(p),
+    questBoard: world.questBoard().quests,
+    nearbyClaims: world.nearbyClaims(p),
+    nearbyStructures: world.nearbyStructures(p),
   };
 }
 
@@ -96,6 +114,9 @@ wss.on("connection", (ws) => {
         seed: world.seed,
         self: world.privateView(player),
         nodes: [...world.nodes.values()],
+        mobs: world.publicMobs(),
+        claims: [...world.claims.values()],
+        structures: [...world.structures.values()],
       });
       broadcast(
         { type: "chat", channel: "world", from: { id: "system", name: "Emberfall", role: "human" }, text: `${name} [${role}] arrived on the isle.` },
@@ -133,6 +154,7 @@ wss.on("connection", (ws) => {
       case "craft": {
         const r = world.craft(p, String(msg.recipeId), Number(msg.qty ?? 1));
         send(ws, { type: "action_result", action: "craft", ok: r.ok, message: r.message, self: world.privateView(p) });
+        flushOutbox(); // level-up / quest completion events
         return;
       }
       case "say": {
@@ -160,27 +182,55 @@ wss.on("connection", (ws) => {
         send(ws, observation(p));
         return;
       case "attack": {
-        const target = world.players.get(String(msg.targetId));
         const r = world.attack(p, String(msg.targetId));
         send(ws, { type: "action_result", action: "attack", ok: r.ok, message: r.message, self: world.privateView(p) });
-        if (r.ok && target) {
-          broadcast({
-            type: "combat",
-            attacker: { id: p.id, name: p.name },
-            target: { id: target.id, name: target.name },
-            damage: r.damage ?? 0,
-            targetHp: r.targetHp ?? target.hp,
-            killed: r.killed ?? false,
-            loot: r.loot,
-          });
-          const targetWs = sockets.get(target.id);
-          if (targetWs) {
-            const note = r.killed
-              ? `You were slain by ${p.name} and lost ${r.loot ?? 0} shards. You wake at the shrine.`
-              : `${p.name} hit you for ${r.damage} (${target.hp}/100 HP). Fight back or flee!`;
-            send(targetWs, { type: "action_result", action: "attack", ok: false, message: note, self: world.privateView(target) });
-          }
+        flushOutbox(); // combat broadcast, victim note, XP/level/quest events
+        return;
+      }
+      case "equip": {
+        const r = world.equip(p, String(msg.item) as ItemId);
+        send(ws, { type: "action_result", action: "equip", ok: r.ok, message: r.message, self: world.privateView(p) });
+        return;
+      }
+      case "unequip": {
+        const slot = msg.slot === "offhand" ? "offhand" : "weapon";
+        const r = world.unequip(p, slot as EquipSlot);
+        send(ws, { type: "action_result", action: "unequip", ok: r.ok, message: r.message, self: world.privateView(p) });
+        return;
+      }
+      case "quest_list": {
+        const { quests, rotatesAt } = world.questBoard();
+        send(ws, { type: "quest_board", quests, active: world.privateView(p).quests, rotatesAt });
+        return;
+      }
+      case "quest_accept": {
+        const r = world.acceptQuest(p, String(msg.questId));
+        send(ws, { type: "action_result", action: "quest_accept", ok: r.ok, message: r.message, self: world.privateView(p) });
+        flushOutbox();
+        return;
+      }
+      case "claim": {
+        const x = Number(msg.pos?.x);
+        const z = Number(msg.pos?.z);
+        if (Number.isNaN(x) || Number.isNaN(z)) {
+          send(ws, { type: "action_result", action: "claim", ok: false, message: "claim.pos must be {x, z}." });
+          return;
         }
+        const r = world.claimPlot(p, { x, z });
+        send(ws, { type: "action_result", action: "claim", ok: r.ok, message: r.message, self: world.privateView(p) });
+        flushOutbox();
+        return;
+      }
+      case "build": {
+        const x = Number(msg.pos?.x);
+        const z = Number(msg.pos?.z);
+        if (Number.isNaN(x) || Number.isNaN(z)) {
+          send(ws, { type: "action_result", action: "build", ok: false, message: "build.pos must be {x, z}." });
+          return;
+        }
+        const r = world.build(p, String(msg.structure) as StructureKind, { x, z });
+        send(ws, { type: "action_result", action: "build", ok: r.ok, message: r.message, self: world.privateView(p) });
+        flushOutbox();
         return;
       }
       default:
@@ -200,20 +250,40 @@ wss.on("connection", (ws) => {
   });
 });
 
-// Movement sub-tick + state frames at 10 Hz.
+// Movement sub-tick (players + mob AI) and state frames at 10 Hz.
 setInterval(() => {
   world.moveTick(WORLD.TICK_MS);
+  flushOutbox();
   const players = [...world.players.values()].map((p) => world.publicView(p));
+  const mobs = world.publicMobs();
+  const claims = [...world.claims.values()];
+  const structures = [...world.structures.values()];
   for (const [id, ws] of sockets) {
     const p = world.players.get(id);
     if (!p) continue;
-    send(ws, { type: "state", t: Date.now(), players, self: { ap: Math.floor(p.ap), shards: p.shards } });
+    send(ws, {
+      type: "state",
+      t: Date.now(),
+      players,
+      self: {
+        ap: Math.floor(p.ap),
+        shards: p.shards,
+        hp: p.hp,
+        xp: p.xp,
+        level: p.level,
+        xpNext: world.privateView(p).xpNext,
+      },
+      mobs,
+      claims,
+      structures,
+    });
   }
 }, WORLD.TICK_MS);
 
-// Game tick at 1 Hz: AP regen, gather completion, node respawn.
+// Game tick at 1 Hz: AP regen, gather completion, node respawn, mob brains.
 setInterval(() => {
   const { completions, respawned } = world.gameTick();
+  flushOutbox();
   for (const { player: p, message } of completions) {
     const ws = sockets.get(p.id);
     if (ws) send(ws, { type: "action_result", action: "gather", ok: true, message, self: world.privateView(p) });
@@ -221,10 +291,15 @@ setInterval(() => {
   for (const node of respawned) broadcast({ type: "node_update", node });
 }, WORLD.GAME_TICK_MS);
 
-// Persistence sweep every 15 s: save all online characters, flush ledger.
+// Persistence sweep every 15 s: save characters, territory, ledger.
 setInterval(() => {
   if (!persistence.enabled) return;
   for (const p of world.players.values()) void persistence.saveCharacter(p);
+  void persistence.saveTerritory(
+    [...world.claims.values()],
+    [...world.structures.values()],
+    world.destroyedStructureIds.splice(0),
+  );
   persistence.queueLedger(world.ledger.slice(ledgerFlushed));
   ledgerFlushed = world.ledger.length;
   void persistence.flushLedger();
@@ -233,9 +308,17 @@ setInterval(() => {
 http.listen(PORT, async () => {
   console.log(`AGENTWORLD server v${PROTOCOL_VERSION} — Emberfall Isle (seed ${SEED})`);
   console.log(`ws://localhost:${PORT}/ws  |  http://localhost:${PORT}/health`);
+  console.log(`pve: ${world.mobs.size} skeletons roam the isle`);
   if (persistence.enabled) {
     const ok = await persistence.ping();
-    console.log(ok ? "persistence: Supabase connected — characters and ledger persist" : "persistence: Supabase configured but unreachable — running in-memory");
+    console.log(ok ? "persistence: Supabase connected — characters, territory and ledger persist" : "persistence: Supabase configured but unreachable — running in-memory");
+    if (ok) {
+      const territory = await persistence.loadTerritory();
+      if (territory) {
+        world.restoreTerritory(territory.claims, territory.structures);
+        console.log(`persistence: restored ${territory.claims.length} claims, ${territory.structures.length} structures`);
+      }
+    }
   } else {
     console.log("persistence: no SUPABASE_URL/SUPABASE_ANON_KEY — running in-memory");
   }

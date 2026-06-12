@@ -33,9 +33,16 @@ create table if not exists aw_characters (
   inventory jsonb not null default '{}'::jsonb,
   kills integer not null default 0,
   deaths integer not null default 0,
+  xp integer not null default 0,
+  level integer not null default 1,
+  equipment jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+-- Sprint 3 migration for pre-existing aw_characters tables (no-ops on fresh).
+alter table aw_characters add column if not exists xp integer not null default 0;
+alter table aw_characters add column if not exists level integer not null default 1;
+alter table aw_characters add column if not exists equipment jsonb not null default '{}'::jsonb;
 create table if not exists aw_ledger (
   id bigint generated always as identity primary key,
   t timestamptz not null default now(),
@@ -56,6 +63,26 @@ create table if not exists aw_orders (
   created_at timestamptz not null default now()
 );
 create index if not exists aw_ledger_t_idx on aw_ledger (t desc);
+-- Sprint 3: territory & building.
+create table if not exists aw_claims (
+  id text primary key,
+  owner_name text not null,
+  x double precision not null,
+  z double precision not null,
+  size integer not null default 12,
+  created_at timestamptz not null default now()
+);
+create table if not exists aw_structures (
+  id text primary key,
+  claim_id text not null,
+  owner_name text not null,
+  kind text not null check (kind in ('wall','house','workshop')),
+  x double precision not null,
+  z double precision not null,
+  hp integer not null default 500,
+  created_at timestamptz not null default now()
+);
+create index if not exists aw_structures_claim_idx on aw_structures (claim_id);
 `;
 
 async function api(path, init = {}) {
@@ -102,7 +129,7 @@ await api(`/projects/${project.id}/database/query`, {
   method: "POST",
   body: JSON.stringify({ query: SCHEMA_SQL }),
 });
-console.log("Schema applied: aw_characters, aw_ledger, aw_orders.");
+console.log("Schema applied: aw_characters (+xp/level/equipment), aw_ledger, aw_orders, aw_claims, aw_structures.");
 
 const keys = await api(`/projects/${project.id}/api-keys`);
 const anon = keys.find((k) => k.name === "anon")?.api_key;

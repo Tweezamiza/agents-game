@@ -8,7 +8,7 @@
  * `observe` on demand and receive LLM-shaped observations).
  */
 
-export const PROTOCOL_VERSION = "0.2.0";
+export const PROTOCOL_VERSION = "0.3.0";
 
 // ---------------------------------------------------------------------------
 // World constants
@@ -63,6 +63,173 @@ export const COMBAT = {
 } as const;
 
 // ---------------------------------------------------------------------------
+// PvE — skeleton mobs (Sprint 3)
+// ---------------------------------------------------------------------------
+
+export const PVE = {
+  /** Target number of mobs alive at once across all camps. */
+  MAX_MOBS: 24,
+  /** Mob walk speed, units per second (slower than players: kiting works). */
+  MOB_SPEED: 3,
+  /** Mobs aggro players within this range of themselves. */
+  AGGRO_RANGE: 8,
+  /** Mobs chase at most this far from their camp, then leash back. */
+  LEASH_RANGE: 20,
+  /** Roam radius around the spawn camp while idle. */
+  ROAM_RADIUS: 6,
+  /** Mob melee reach (players out-range them at 2.5). */
+  ATTACK_RANGE: 2,
+  /** Milliseconds between mob attacks. */
+  ATTACK_COOLDOWN_MS: 1500,
+  /** Mob HP = HP_BASE + HP_PER_LEVEL * level. */
+  HP_BASE: 40,
+  HP_PER_LEVEL: 15,
+  /** Mob damage = DAMAGE_BASE + level + rand(0..DAMAGE_RAND), so ~6-12. */
+  DAMAGE_BASE: 5,
+  DAMAGE_RAND: 2,
+  /** Seconds after death before a camp respawns the mob. */
+  RESPAWN_S: 60,
+  /** XP granted to the killer = XP_PER_MOB_LEVEL * mob level. */
+  XP_PER_MOB_LEVEL: 25,
+  /** Every kill drops 1..BONE_DROP_MAX bones. */
+  BONE_DROP_MAX: 2,
+  /** Chance any skeleton drops an ember crystal. */
+  EMBER_DROP_CHANCE: 0.15,
+  /** Chance a warrior drops equipment (rusty sword / wooden shield). */
+  EQUIP_DROP_CHANCE: 0.5,
+  /** Bad-luck protection: a warrior is guaranteed to drop equipment after
+   *  this many consecutive equipment-less warrior kills (world-wide). */
+  EQUIP_PITY_KILLS: 2,
+} as const;
+
+export type MobKind = "skeleton_minion" | "skeleton_warrior";
+
+/** Mob snapshot included in state frames, welcome, and observations. */
+export interface MobPublic {
+  id: string;
+  kind: MobKind;
+  level: number;
+  pos: Vec2;
+  hp: number;
+  hpMax: number;
+  /** Player id this mob is currently chasing/attacking, if any. */
+  targetId?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Progression — XP and levels (Sprint 3)
+// ---------------------------------------------------------------------------
+
+export const PROGRESSION = {
+  MAX_LEVEL: 20,
+  /** Max HP gained per level beyond 1. */
+  HP_PER_LEVEL: 6,
+  /** Base damage gained per level beyond 1. */
+  DAMAGE_PER_LEVEL: 1,
+  /** XP per completed gather. */
+  XP_GATHER: 3,
+  /** XP per crafted recipe unit. */
+  XP_CRAFT: 5,
+} as const;
+
+/** XP required to advance FROM level n to n+1. */
+export function xpForLevel(n: number): number {
+  return Math.round(100 * Math.pow(n, 1.7));
+}
+
+/** Player max HP at a given level. */
+export function maxHpForLevel(level: number): number {
+  return COMBAT.HP_MAX + PROGRESSION.HP_PER_LEVEL * (Math.max(1, level) - 1);
+}
+
+// ---------------------------------------------------------------------------
+// Quests (Sprint 3)
+// ---------------------------------------------------------------------------
+
+export const QUESTS = {
+  /** The village quest board rotates every 10 minutes. */
+  ROTATION_MS: 600_000,
+  /** Quests on the board per rotation. */
+  BOARD_SIZE: 3,
+  /** Max simultaneously accepted quests per player. */
+  MAX_ACTIVE_PER_PLAYER: 2,
+} as const;
+
+export type QuestGoal =
+  | { type: "slay"; mobKind?: MobKind; count: number }
+  | { type: "gather"; item: ItemId; count: number }
+  | { type: "craft"; recipeId: string; count: number };
+
+export interface Quest {
+  id: string;
+  title: string;
+  description: string;
+  goal: QuestGoal;
+  rewardShards: number;
+  rewardXp: number;
+  /** Epoch ms when this board rotation ends (accepted quests stay valid). */
+  expiresAt: number;
+}
+
+/** Per-player accepted quest, included in quest_board / observation. */
+export interface QuestProgress {
+  quest: Quest;
+  progress: number;
+}
+
+// ---------------------------------------------------------------------------
+// Territory & building (Sprint 3)
+// ---------------------------------------------------------------------------
+
+export const TERRITORY = {
+  /** Side length of a square plot, centered on the claim point. */
+  CLAIM_SIZE: 12,
+  CLAIM_COST_SHARDS: 50,
+  /** Claims must be at least this far from the village shrine. */
+  MIN_DIST_FROM_VILLAGE: 25,
+  /** Claim centers must be at least this far apart. */
+  MIN_DIST_BETWEEN_CLAIMS: 15,
+  STRUCTURE_HP: 500,
+  /** Workshop aura radius: crafting within it costs less AP. */
+  WORKSHOP_RANGE: 10,
+  /** Fractional AP discount on crafting near a workshop. */
+  WORKSHOP_CRAFT_DISCOUNT: 0.25,
+  /** Shards paid per craft to the workshop owner by non-owners. */
+  WORKSHOP_FEE_SHARDS: 1,
+  /** Fraction of build materials dropped to the destroyer on demolition. */
+  SALVAGE_FRACTION: 0.5,
+} as const;
+
+export type StructureKind = "wall" | "house" | "workshop";
+
+export const STRUCTURE_COSTS: Record<StructureKind, Partial<Record<ItemId, number>>> = {
+  wall: { wood: 5, stone: 5 },
+  house: { wood: 20, stone: 10 },
+  workshop: { wood: 15, stone: 15 },
+};
+
+export interface Claim {
+  id: string;
+  /** Empty string while the owner is offline (claims persist across sessions). */
+  ownerId: string;
+  ownerName: string;
+  center: Vec2;
+  /** Side length (= TERRITORY.CLAIM_SIZE). */
+  size: number;
+}
+
+export interface Structure {
+  id: string;
+  kind: StructureKind;
+  ownerId: string;
+  ownerName: string;
+  claimId: string;
+  pos: Vec2;
+  hp: number;
+  hpMax: number;
+}
+
+// ---------------------------------------------------------------------------
 // Items, resources, recipes
 // ---------------------------------------------------------------------------
 
@@ -73,7 +240,39 @@ export type ItemId =
   | "plank"
   | "brick"
   | "stone_axe"
-  | "ember_charm";
+  | "ember_charm"
+  | "bone"
+  | "rusty_sword"
+  | "iron_sword"
+  | "wooden_shield"
+  | "iron_shield";
+
+// ---------------------------------------------------------------------------
+// Equipment (Sprint 3) — weapon adds damage, offhand shield reduces incoming
+// damage (never below 1).
+// ---------------------------------------------------------------------------
+
+export type EquipSlot = "weapon" | "offhand";
+
+export interface Equipment {
+  weapon?: ItemId;
+  offhand?: ItemId;
+}
+
+export interface EquipStats {
+  slot: EquipSlot;
+  /** Added to outgoing attack damage. */
+  damage?: number;
+  /** Subtracted from incoming damage (min 1 still lands). */
+  defense?: number;
+}
+
+export const EQUIPMENT_STATS: Partial<Record<ItemId, EquipStats>> = {
+  rusty_sword: { slot: "weapon", damage: 3 },
+  iron_sword: { slot: "weapon", damage: 6 },
+  wooden_shield: { slot: "offhand", defense: 2 },
+  iron_shield: { slot: "offhand", defense: 4 },
+};
 
 export type ResourceKind = "tree" | "rock" | "crystal";
 
@@ -95,6 +294,9 @@ export const RECIPES: Recipe[] = [
   { id: "brick", output: "brick", outputQty: 1, inputs: { stone: 2 } },
   { id: "stone_axe", output: "stone_axe", outputQty: 1, inputs: { wood: 1, stone: 2 } },
   { id: "ember_charm", output: "ember_charm", outputQty: 1, inputs: { ember_crystal: 1, plank: 2 } },
+  { id: "wooden_shield", output: "wooden_shield", outputQty: 1, inputs: { wood: 3, plank: 1 } },
+  { id: "iron_sword", output: "iron_sword", outputQty: 1, inputs: { stone: 3, wood: 2, ember_crystal: 1 } },
+  { id: "iron_shield", output: "iron_shield", outputQty: 1, inputs: { stone: 4, plank: 2, ember_crystal: 1 } },
 ];
 
 // ---------------------------------------------------------------------------
@@ -119,6 +321,9 @@ export interface PlayerPublic {
   busy: boolean;
   hp: number;
   hpMax: number;
+  level: number;
+  /** Equipped items, so clients can attach weapon/shield models. */
+  equipment: Equipment;
 }
 
 export interface PlayerPrivate extends PlayerPublic {
@@ -130,6 +335,12 @@ export interface PlayerPrivate extends PlayerPublic {
   deaths: number;
   /** True while inside the central no-PvP shrine zone. */
   inSafeZone: boolean;
+  /** XP accumulated toward the next level. */
+  xp: number;
+  /** XP needed to advance from the current level (xpForLevel(level)). */
+  xpNext: number;
+  /** Accepted quests with progress. */
+  quests: QuestProgress[];
 }
 
 export interface ResourceNode {
@@ -208,7 +419,43 @@ export interface ObserveMsg {
 
 export interface AttackMsg {
   type: "attack";
+  /** A player id, mob id, or structure id (siege, outside the safe zone). */
   targetId: string;
+}
+
+/** Equip an equippable item from the inventory (auto-swaps the slot). */
+export interface EquipMsg {
+  type: "equip";
+  item: ItemId;
+}
+
+/** Return the equipped item in `slot` to the inventory. */
+export interface UnequipMsg {
+  type: "unequip";
+  slot: EquipSlot;
+}
+
+/** Request the current village quest board + your accepted quests. */
+export interface QuestListMsg {
+  type: "quest_list";
+}
+
+export interface QuestAcceptMsg {
+  type: "quest_accept";
+  questId: string;
+}
+
+/** Claim a TERRITORY.CLAIM_SIZE square plot centered on pos (50 shards). */
+export interface ClaimMsg {
+  type: "claim";
+  pos: Vec2;
+}
+
+/** Place a structure on one of YOUR plots (consumes STRUCTURE_COSTS). */
+export interface BuildMsg {
+  type: "build";
+  structure: StructureKind;
+  pos: Vec2;
 }
 
 export type ClientMsg =
@@ -221,7 +468,13 @@ export type ClientMsg =
   | TradePostMsg
   | TradeFillMsg
   | ObserveMsg
-  | AttackMsg;
+  | AttackMsg
+  | EquipMsg
+  | UnequipMsg
+  | QuestListMsg
+  | QuestAcceptMsg
+  | ClaimMsg
+  | BuildMsg;
 
 // ---------------------------------------------------------------------------
 // Server → Client messages
@@ -236,6 +489,10 @@ export interface WelcomeMsg {
   seed: number;
   self: PlayerPrivate;
   nodes: ResourceNode[];
+  /** Sprint 3 additive fields (older clients ignore them). */
+  mobs?: MobPublic[];
+  claims?: Claim[];
+  structures?: Structure[];
 }
 
 /** 10 Hz frame for smooth rendering. Positions only; full data via observe. */
@@ -243,7 +500,21 @@ export interface StateMsg {
   type: "state";
   t: number;
   players: PlayerPublic[];
-  self: { ap: number; shards: number };
+  self: {
+    ap: number;
+    shards: number;
+    /** Sprint 3 additive fields. */
+    hp?: number;
+    xp?: number;
+    level?: number;
+    xpNext?: number;
+  };
+  /** All living mobs (Sprint 3, additive). */
+  mobs?: MobPublic[];
+  /** All claimed plots (Sprint 3, additive). */
+  claims?: Claim[];
+  /** All standing structures (Sprint 3, additive). */
+  structures?: Structure[];
 }
 
 export interface ChatEvent {
@@ -288,6 +559,41 @@ export interface CombatEvent {
   killed: boolean;
   /** Shards looted by the attacker when killed is true. */
   loot?: number;
+  /** "player" when omitted (pre-0.3 compat); mobs/structures are additive. */
+  targetKind?: "player" | "mob" | "structure";
+  attackerKind?: "player" | "mob";
+  /** Items dropped to the killer (mob loot / structure salvage). */
+  lootItems?: Partial<Record<ItemId, number>>;
+  /** XP granted to the killer. */
+  xp?: number;
+}
+
+/** Generic world event broadcast (level-ups, quests, territory, ...). */
+export interface GameEventMsg {
+  type: "event";
+  event:
+    | "level_up"
+    | "quest_complete"
+    | "quest_accepted"
+    | "claim_created"
+    | "structure_built"
+    | "structure_destroyed"
+    | "mob_spawn";
+  message: string;
+  /** Player the event concerns, when applicable. */
+  playerId?: string;
+  data?: Record<string, unknown>;
+}
+
+/** Response to quest_list: the rotating village board + your accepted quests. */
+export interface QuestBoardMsg {
+  type: "quest_board";
+  /** Quests currently offered by the village board. */
+  quests: Quest[];
+  /** Your accepted quests with progress. */
+  active: QuestProgress[];
+  /** Epoch ms when the board rotates next. */
+  rotatesAt: number;
 }
 
 /**
@@ -303,6 +609,11 @@ export interface ObservationMsg {
   nearbyNodes: ResourceNode[];
   market: MarketOrder[];
   recipes: Recipe[];
+  /** Sprint 3 additive fields. */
+  nearbyMobs?: MobPublic[];
+  questBoard?: Quest[];
+  nearbyClaims?: Claim[];
+  nearbyStructures?: Structure[];
 }
 
 export type ServerMsg =
@@ -314,7 +625,9 @@ export type ServerMsg =
   | MarketUpdateMsg
   | ErrorMsg
   | ObservationMsg
-  | CombatEvent;
+  | CombatEvent
+  | GameEventMsg
+  | QuestBoardMsg;
 
 /** Centre of the island — the spawn shrine anchoring the no-PvP zone. */
 export const SAFE_ZONE_CENTER: Vec2 = { x: WORLD.SIZE / 2, z: WORLD.SIZE / 2 };

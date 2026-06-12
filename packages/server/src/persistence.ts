@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { ItemId, Role, Vec2 } from "@agentworld/protocol";
+import { Claim, Equipment, ItemId, Role, Structure, StructureKind, TERRITORY, Vec2 } from "@agentworld/protocol";
 import type { LedgerEntry, Player } from "./world.js";
 
 /**
@@ -24,6 +24,27 @@ export interface CharacterRow {
   inventory: Partial<Record<ItemId, number>>;
   kills: number;
   deaths: number;
+  xp?: number;
+  level?: number;
+  equipment?: Equipment;
+}
+
+export interface ClaimRow {
+  id: string;
+  owner_name: string;
+  x: number;
+  z: number;
+  size: number;
+}
+
+export interface StructureRow {
+  id: string;
+  claim_id: string;
+  owner_name: string;
+  kind: StructureKind;
+  x: number;
+  z: number;
+  hp: number;
 }
 
 function loadDotEnv(): Record<string, string> {
@@ -101,6 +122,9 @@ export class Persistence {
       inventory: p.inventory,
       kills: p.kills,
       deaths: p.deaths,
+      xp: p.xp,
+      level: p.level,
+      equipment: p.equipment,
       updated_at: new Date().toISOString(),
     };
     try {
@@ -144,7 +168,7 @@ export class Persistence {
     }
   }
 
-  restoreToPlayer(row: CharacterRow): { pos: Vec2; ap: number; hp: number; shards: number; inventory: Partial<Record<ItemId, number>>; kills: number; deaths: number } {
+  restoreToPlayer(row: CharacterRow): Pick<Player, "pos" | "ap" | "hp" | "shards" | "inventory" | "kills" | "deaths" | "xp" | "level" | "equipment"> {
     return {
       pos: { x: row.x, z: row.z },
       ap: row.ap,
@@ -153,6 +177,80 @@ export class Persistence {
       inventory: row.inventory ?? {},
       kills: row.kills,
       deaths: row.deaths,
+      xp: row.xp ?? 0,
+      level: row.level ?? 1,
+      equipment: row.equipment ?? {},
     };
+  }
+
+  // -- Territory (Sprint 3): aw_claims / aw_structures -------------------------
+
+  async loadTerritory(): Promise<{ claims: Claim[]; structures: Structure[] } | null> {
+    if (!this.enabled) return null;
+    try {
+      const [claimsRes, structuresRes] = await Promise.all([
+        this.rest("aw_claims?select=*"),
+        this.rest("aw_structures?select=*"),
+      ]);
+      if (!claimsRes.ok || !structuresRes.ok) return null;
+      const claimRows = (await claimsRes.json()) as ClaimRow[];
+      const structureRows = (await structuresRes.json()) as StructureRow[];
+      return {
+        claims: claimRows.map((r) => ({
+          id: r.id,
+          ownerId: "",
+          ownerName: r.owner_name,
+          center: { x: r.x, z: r.z },
+          size: r.size,
+        })),
+        structures: structureRows.map((r) => ({
+          id: r.id,
+          kind: r.kind,
+          ownerId: "",
+          ownerName: r.owner_name,
+          claimId: r.claim_id,
+          pos: { x: r.x, z: r.z },
+          hp: r.hp,
+          hpMax: TERRITORY.STRUCTURE_HP,
+        })),
+      };
+    } catch (err) {
+      console.error("persistence: loadTerritory failed:", err);
+      return null;
+    }
+  }
+
+  async saveTerritory(claims: Claim[], structures: Structure[], destroyedStructureIds: string[]): Promise<void> {
+    if (!this.enabled) return;
+    try {
+      if (claims.length > 0) {
+        const res = await this.rest("aw_claims?on_conflict=id", {
+          method: "POST",
+          prefer: "resolution=merge-duplicates",
+          body: JSON.stringify(
+            claims.map((c): ClaimRow => ({ id: c.id, owner_name: c.ownerName, x: c.center.x, z: c.center.z, size: c.size })),
+          ),
+        });
+        if (!res.ok) console.error("persistence: save claims failed:", res.status, await res.text());
+      }
+      if (structures.length > 0) {
+        const res = await this.rest("aw_structures?on_conflict=id", {
+          method: "POST",
+          prefer: "resolution=merge-duplicates",
+          body: JSON.stringify(
+            structures.map((s): StructureRow => ({ id: s.id, claim_id: s.claimId, owner_name: s.ownerName, kind: s.kind, x: s.pos.x, z: s.pos.z, hp: s.hp })),
+          ),
+        });
+        if (!res.ok) console.error("persistence: save structures failed:", res.status, await res.text());
+      }
+      if (destroyedStructureIds.length > 0) {
+        // Structure ids are server-generated (s-<n>), safe to inline.
+        const ids = destroyedStructureIds.join(",");
+        const res = await this.rest(`aw_structures?id=in.(${ids})`, { method: "DELETE" });
+        if (!res.ok) console.error("persistence: delete structures failed:", res.status, await res.text());
+      }
+    } catch (err) {
+      console.error("persistence: saveTerritory failed:", err);
+    }
   }
 }
