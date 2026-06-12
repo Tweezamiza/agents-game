@@ -117,7 +117,7 @@ export const RECIPES: Recipe[] = [
 // Mobs — server-authoritative PvE creatures, spawned from the world seed.
 // ---------------------------------------------------------------------------
 
-export type MobKind = "boar" | "wolf" | "golem";
+export type MobKind = "boar" | "wolf" | "golem" | "bonelord";
 
 export interface MobStats {
   /** Display name used in combat events and observations. */
@@ -143,6 +143,8 @@ export const MOBS: Record<MobKind, MobStats> = {
   boar: { name: "Boar", level: 2, hpMax: 40, damageMin: 4, damageMax: 7, moveSpeed: 2.2, attackRange: 1.8, aggroRange: 8, aggressive: false, xp: 18, shards: 4, drop: "hide", dropChance: 0.8 },
   wolf: { name: "Wolf", level: 4, hpMax: 55, damageMin: 7, damageMax: 12, moveSpeed: 3.2, attackRange: 2, aggroRange: 10, aggressive: true, xp: 30, shards: 8, drop: "fang", dropChance: 0.7 },
   golem: { name: "Highland Golem", level: 8, hpMax: 140, damageMin: 14, damageMax: 22, moveSpeed: 1.3, attackRange: 2.2, aggroRange: 9, aggressive: true, xp: 75, shards: 20, drop: "golem_core", dropChance: 0.45 },
+  /** World boss — one alive at a time, on the highland summit. */
+  bonelord: { name: "Bonelord Vekk", level: 12, hpMax: 420, damageMin: 18, damageMax: 28, moveSpeed: 2.0, attackRange: 2.6, aggroRange: 12, aggressive: true, xp: 300, shards: 150, drop: "golem_core", dropChance: 1 },
 };
 
 export interface MobPublic {

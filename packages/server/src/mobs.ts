@@ -14,6 +14,8 @@ import { mulberry32 } from "./rng.js";
 
 /** Game ticks from death to respawn at the home position. */
 const RESPAWN_TICKS = 90;
+/** The world boss stays down much longer — its return is an event. */
+const BOSS_RESPAWN_TICKS = 600;
 /** Dragged further than this from home, a mob de-aggros and walks back. */
 const LEASH_RANGE = 25;
 /** Game ticks between mob attacks. */
@@ -23,12 +25,14 @@ const IDLE_HEAL = 4;
 /** Idle wander keeps a mob within this radius of home. */
 const WANDER_RADIUS = 8;
 
-const SPAWN_COUNTS: Record<MobKind, number> = { boar: 14, wolf: 10, golem: 6 };
+const SPAWN_COUNTS: Record<MobKind, number> = { boar: 14, wolf: 10, golem: 6, bonelord: 1 };
 /** Terrain bands: boars in meadows, wolves in the forest belt, golems on the highland. */
 const SPAWN_BANDS: Record<MobKind, [number, number]> = {
   boar: [0.8, 3.2],
   wolf: [1.2, 6.5],
   golem: [5.5, Infinity],
+  // The Bonelord holds the very top of the highland.
+  bonelord: [6.5, Infinity],
 };
 
 export interface Mob {
@@ -103,7 +107,7 @@ export class MobManager {
     mob.hp = 0;
     mob.targetId = null;
     mob.leashing = false;
-    mob.respawnTicks = RESPAWN_TICKS;
+    mob.respawnTicks = mob.kind === "bonelord" ? BOSS_RESPAWN_TICKS : RESPAWN_TICKS;
   }
 
   /** AI on the 1s game tick: respawn, leash, aggro, chase, attack, wander. */

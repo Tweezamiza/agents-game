@@ -1,8 +1,10 @@
 import {
+  type AssetContainer,
   Color3,
   DynamicTexture,
   Mesh,
   MeshBuilder,
+  PointLight,
   Scene,
   ShadowGenerator,
   StandardMaterial,
@@ -17,7 +19,10 @@ const HIT_FLASH_MS = 280;
 const SNAP_DISTANCE = 8;
 
 /** Tag height above the ground per kind (golems are tall). */
-const TAG_HEIGHTS: Record<MobKind, number> = { boar: 1.7, wolf: 1.9, golem: 3.1 };
+const TAG_HEIGHTS: Record<MobKind, number> = { boar: 1.7, wolf: 1.9, golem: 3.1, bonelord: 4.1 };
+
+/** The Bonelord towers over the player characters (~1.8u tall). */
+const BOSS_SCALE = 1.8;
 
 interface MobVisual {
   root: TransformNode;
@@ -45,6 +50,8 @@ export class MobLayer {
     private readonly scene: Scene,
     private readonly shadows: ShadowGenerator | null,
     private readonly groundY: (x: number, z: number) => number,
+    /** Lazily resolves the boss character container (may still be loading). */
+    private readonly bossContainer: () => AssetContainer | null = () => null,
   ) {}
 
   has(id: string): boolean {
@@ -128,10 +135,8 @@ export class MobLayer {
   // -------------------------------------------------------------------------
 
   private create(m: MobPublic, now: number): MobVisual | null {
-    const tpl = this.template(m.kind);
-    const clone = tpl.clone(`mob:${m.id}`, null);
+    const clone = m.kind === "bonelord" ? this.createBoss(m) : this.createComposite(m);
     if (!clone) return null;
-    clone.setEnabled(true);
     const meshes: Mesh[] = [];
     for (const mesh of clone.getChildMeshes()) {
       if (!(mesh instanceof Mesh)) continue;
@@ -186,6 +191,41 @@ export class MobLayer {
     mat.disableLighting = true;
     mat.backFaceCulling = false;
     tag.material = mat;
+  }
+
+  /** Boars/wolves/golems clone from a shared primitive-composite template. */
+  private createComposite(m: MobPublic): TransformNode | null {
+    const clone = this.template(m.kind).clone(`mob:${m.id}`, null);
+    clone?.setEnabled(true);
+    return clone;
+  }
+
+  /**
+   * The Bonelord is a real KayKit character (Skeleton Warrior) scaled to
+   * boss size with an ember glow, idling on its rig. Falls back to the golem
+   * composite while the container is still loading.
+   */
+  private createBoss(m: MobPublic): TransformNode | null {
+    const container = this.bossContainer();
+    if (!container) return this.createComposite({ ...m, kind: "golem" });
+    const entries = container.instantiateModelsToScene((n) => `${m.id}:${n}`, false, {
+      doNotInstantiate: true,
+    });
+    const node = new TransformNode(`mob:${m.id}`, this.scene);
+    for (const r of entries.rootNodes) {
+      r.parent = node;
+      if (r instanceof TransformNode) r.scaling.setAll(BOSS_SCALE);
+    }
+    for (const g of entries.animationGroups) g.stop();
+    const idle =
+      entries.animationGroups.find((g) => g.name === "Idle" || g.name.endsWith(":Idle")) ?? null;
+    idle?.start(true);
+    const glow = new PointLight(`bossGlow:${m.id}`, new Vector3(0, 2.4, 0), this.scene);
+    glow.diffuse = new Color3(1.0, 0.45, 0.15);
+    glow.intensity = 0.85;
+    glow.range = 10;
+    glow.parent = node;
+    return node;
   }
 
   // -- Primitive composite templates, one per kind ----------------------------

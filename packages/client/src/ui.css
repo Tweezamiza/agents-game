@@ -551,11 +551,14 @@ button.action:disabled { opacity: 0.35; cursor: not-allowed; }
    Name modal — illuminated title plate
 --------------------------------------------------------------------------- */
 
-#name-modal {
+#name-modal,
+#reconnect-modal {
   position: absolute; inset: 0; z-index: 100;
   background: radial-gradient(ellipse at center, rgba(31, 21, 12, 0.9), rgba(10, 6, 3, 0.97));
   display: flex; align-items: center; justify-content: center;
 }
+#reconnect-modal[hidden] { display: none; }
+#reconnect-modal p { max-width: 360px; }
 #name-box {
   --ch: 16px;
   text-align: center; padding: 42px 56px;

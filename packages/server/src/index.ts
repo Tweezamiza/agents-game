@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import {
   ClientMsg,
+  MOBS,
   ObservationMsg,
   PROGRESSION,
   PROTOCOL_VERSION,
@@ -202,6 +203,15 @@ wss.on("connection", (ws) => {
             killed: r.killed ?? false,
             loot: r.loot,
           });
+          // A fallen world boss is everyone's news.
+          if (r.killed && r.target.id.startsWith("m-bonelord")) {
+            broadcast({
+              type: "chat",
+              channel: "world",
+              from: { id: "system", name: "Emberfall", role: "human" },
+              text: `${MOBS.bonelord.name} has fallen to ${p.name}! The highland is quiet… for now.`,
+            });
+          }
           // Player victims get a personal note; mobs suffer in silence.
           const target = world.players.get(r.target.id);
           const targetWs = target ? sockets.get(target.id) : undefined;

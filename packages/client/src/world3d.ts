@@ -72,6 +72,9 @@ const CHARACTERS: Record<"human" | "agent", CharacterSpec> = {
   },
 };
 
+/** World-boss character model (KayKit Skeletons pack), rendered by MobLayer. */
+const BOSS_URL = `${ASSETS}/characters/Skeleton_Warrior.glb`;
+
 interface PropSpec {
   url: string;
   scale: number;
@@ -331,6 +334,7 @@ export class World3D {
     const urls = new Set<string>();
     urls.add(CHARACTERS.human.url);
     urls.add(CHARACTERS.agent.url);
+    urls.add(BOSS_URL);
     for (const v of TREE_VARIANTS) urls.add(v.url);
     for (const v of ROCK_VARIANTS) urls.add(v.url);
     for (const b of VILLAGE_BUILDINGS) urls.add(b.url);
@@ -388,7 +392,7 @@ export class World3D {
     this.buildWater();
     this.buildSafeZoneRing();
     const ground = (x: number, z: number) => this.groundY(x, z);
-    this.mobLayer = new MobLayer(this.scene, this.shadows, ground);
+    this.mobLayer = new MobLayer(this.scene, this.shadows, ground, () => this.containers?.get(BOSS_URL) ?? null);
     this.structureLayer = new StructureLayer(this.scene, this.shadows, ground);
     this.mobLayer.update(mobs);
     this.structureLayer.setAll(structures);

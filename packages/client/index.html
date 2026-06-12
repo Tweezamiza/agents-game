@@ -305,6 +305,17 @@
     </div>
   </div>
 
+  <!-- Shown when the socket drops or the WebGL context is lost; the only
+       reliable recovery for a dead context is a clean reload. -->
+  <div id="reconnect-modal" hidden>
+    <div id="name-box">
+      <h1>THE MIST TOOK YOU</h1>
+      <div class="nb-rule" aria-hidden="true">◆</div>
+      <p id="reconnect-reason">The connection to Emberfall Isle was lost.</p>
+      <button id="reconnect-btn" class="action">Return to the Isle</button>
+    </div>
+  </div>
+
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
