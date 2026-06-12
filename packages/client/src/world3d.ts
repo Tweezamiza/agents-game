@@ -89,6 +89,9 @@ const ROCK_VARIANTS: PropSpec[] = [
   { url: `${ASSETS}/nature/rock_single_A.gltf`, scale: 9.0 },
 ];
 
+/** Toggle for the warm vignette/contrast grade layered on the pipeline. */
+const ATMOSPHERE_GRADE = true;
+
 const CHARACTER_HEIGHT = 1.8;
 const TAG_HEIGHT = 2.35;
 const SNAP_DISTANCE = 6;
@@ -188,10 +191,11 @@ export class World3D {
     this.engine = new Engine(canvas, true, { stencil: true });
     this.scene = new Scene(this.engine);
     (window as unknown as Record<string, unknown>).__scene = this.scene;
-    this.scene.clearColor = new Color4(0.62, 0.78, 0.88, 1);
+    this.scene.clearColor = new Color4(0.66, 0.79, 0.87, 1);
+    // Gentle distance haze, warmed toward the golden horizon of the skybox.
     this.scene.fogMode = Scene.FOGMODE_EXP2;
     this.scene.fogDensity = 0.0021;
-    this.scene.fogColor = new Color3(0.71, 0.82, 0.9);
+    this.scene.fogColor = new Color3(0.78, 0.82, 0.85);
 
     const half = WORLD.SIZE / 2;
     this.camera = new ArcRotateCamera(
@@ -212,11 +216,11 @@ export class World3D {
     this.camera.minZ = 0.5;
     this.camera.maxZ = 1200;
 
-    // Warm afternoon sun + cool sky fill.
+    // Warm afternoon sun + slightly golden sky fill ("ember light").
     const hemi = new HemisphericLight("hemi", new Vector3(0.1, 1, 0.05), this.scene);
-    hemi.intensity = 0.55;
-    hemi.diffuse = new Color3(0.85, 0.92, 1.0);
-    hemi.groundColor = new Color3(0.45, 0.4, 0.32);
+    hemi.intensity = 0.57;
+    hemi.diffuse = new Color3(0.94, 0.9, 0.82);
+    hemi.groundColor = new Color3(0.5, 0.42, 0.3);
     const sun = new DirectionalLight("sun", new Vector3(-0.45, -0.8, 0.35), this.scene);
     sun.intensity = 1.35;
     sun.diffuse = new Color3(1.0, 0.94, 0.82);
@@ -254,6 +258,25 @@ export class World3D {
     pipeline.bloomWeight = 0.3;
     pipeline.bloomKernel = 48;
     pipeline.bloomScale = 0.5;
+
+    // Atmosphere grade: a soft warm vignette + touch of contrast so the world
+    // reads "ember-lit chronicle" instead of raw render. Guarded — older
+    // @babylonjs/core builds without image processing simply skip it.
+    if (ATMOSPHERE_GRADE) {
+      try {
+        pipeline.imageProcessingEnabled = true;
+        const ip = pipeline.imageProcessing;
+        if (ip) {
+          ip.vignetteEnabled = true;
+          ip.vignetteWeight = 1.4;
+          ip.vignetteColor = new Color4(0.1, 0.05, 0.02, 0);
+          ip.exposure = 1.04;
+          ip.contrast = 1.05;
+        }
+      } catch {
+        // Image processing unavailable — keep the default pipeline output.
+      }
+    }
 
     this.matRockBase = this.solidMat("matRockBase", new Color3(0.45, 0.44, 0.47));
     this.matCrystal = this.solidMat("matCrystal", new Color3(0.05, 0.3, 0.36));
@@ -858,6 +881,9 @@ export class World3D {
     tag.billboardMode = Mesh.BILLBOARDMODE_ALL;
     tag.isPickable = false;
     tag.applyFog = false;
+    // Your own name over your own head is clutter — and at the shared shrine
+    // spawn it z-fights with nearby citizens' tags into garbage text.
+    if (p.id === this.myId) tag.setEnabled(false);
 
     const pv: PlayerVisual = {
       root,

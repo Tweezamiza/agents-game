@@ -8,7 +8,7 @@
  * `observe` on demand and receive LLM-shaped observations).
  */
 
-export const PROTOCOL_VERSION = "0.3.0";
+export const PROTOCOL_VERSION = "0.4.0";
 
 // ---------------------------------------------------------------------------
 // World constants
@@ -244,6 +244,8 @@ export interface PlayerPrivate extends PlayerPublic {
   xpNext: number;
   /** True while inside the central no-PvP shrine zone. */
   inSafeZone: boolean;
+  /** Active and completed quests (accepted ones only). */
+  quests: QuestState[];
 }
 
 export interface ResourceNode {
@@ -263,6 +265,44 @@ export interface MarketOrder {
   qty: number;
   /** Price in shards per unit. */
   price: number;
+}
+
+// ---------------------------------------------------------------------------
+// Quests — a hand-authored story campaign plus a rotating side-quest board.
+// Definitions are static content; per-player progress lives in QuestState.
+// ---------------------------------------------------------------------------
+
+export type QuestObjectiveKind = "gather" | "craft" | "kill" | "build" | "explore";
+
+export interface QuestObjective {
+  kind: QuestObjectiveKind;
+  /** ItemId for gather, recipe id for craft, MobKind for kill, StructureKind for build, named place for explore. */
+  target: string;
+  qty: number;
+}
+
+export interface QuestDef {
+  id: string;
+  title: string;
+  /** Narrative hook shown in the journal — the giver's words, in character. */
+  story: string;
+  /** NPC quest giver, e.g. "Elder Maren". */
+  giver: string;
+  objective: QuestObjective;
+  rewardShards: number;
+  rewardXp: number;
+  rewardItems?: Partial<Record<ItemId, number>>;
+  /** Story chains: quest id that must be turned in first. */
+  requires?: string;
+  /** True for rotating board side-quests (non-story). */
+  side?: boolean;
+}
+
+export interface QuestState {
+  questId: string;
+  progress: number;
+  /** Objective met; rewards are granted automatically on completion. */
+  done: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -332,6 +372,11 @@ export interface BuildMsg {
   structure: StructureKind;
 }
 
+export interface QuestAcceptMsg {
+  type: "quest_accept";
+  questId: string;
+}
+
 export type ClientMsg =
   | JoinMsg
   | MoveMsg
@@ -343,7 +388,8 @@ export type ClientMsg =
   | TradeFillMsg
   | ObserveMsg
   | AttackMsg
-  | BuildMsg;
+  | BuildMsg
+  | QuestAcceptMsg;
 
 // ---------------------------------------------------------------------------
 // Server → Client messages
@@ -360,6 +406,8 @@ export interface WelcomeMsg {
   nodes: ResourceNode[];
   mobs: MobPublic[];
   structures: Structure[];
+  /** All quests currently offered to this player (story unlocks + board). */
+  quests: QuestDef[];
 }
 
 /** 10 Hz frame for smooth rendering. Positions only; full data via observe. */
@@ -405,6 +453,17 @@ export interface StructureUpdateMsg {
   structures: Structure[];
 }
 
+/** Sent to one player when a quest is accepted, progresses, or completes. */
+export interface QuestUpdateMsg {
+  type: "quest_update";
+  quest: QuestDef;
+  state: QuestState;
+  /** Journal line, e.g. "Wolfsbane: 2/3 wolves slain." */
+  message: string;
+  /** Set when the quest just completed and rewards were granted. */
+  completed?: boolean;
+}
+
 export interface ErrorMsg {
   type: "error";
   message: string;
@@ -437,6 +496,8 @@ export interface ObservationMsg {
   structures: Structure[];
   market: MarketOrder[];
   recipes: Recipe[];
+  /** Quests currently offered to this player (story unlocks + board). */
+  quests: QuestDef[];
 }
 
 export type ServerMsg =
@@ -447,6 +508,7 @@ export type ServerMsg =
   | NodeUpdateMsg
   | MarketUpdateMsg
   | StructureUpdateMsg
+  | QuestUpdateMsg
   | ErrorMsg
   | ObservationMsg
   | CombatEvent;

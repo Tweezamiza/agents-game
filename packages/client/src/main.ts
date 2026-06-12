@@ -33,6 +33,7 @@ const hud = new Hud({
   onPost: (side, item, qty, price) =>
     net.send({ type: "trade_post", side, item, qty, price }),
   onBuild: (structure) => net.send({ type: "build", structure }),
+  onQuestAccept: (questId) => net.send({ type: "quest_accept", questId }),
 });
 
 const world = new World3D(canvas, {
@@ -82,9 +83,13 @@ function handleMsg(msg: ServerMsg): void {
       hud.setSafeZone(msg.self.inSafeZone);
       hud.setXp(msg.self.level, msg.self.xp, msg.self.xpNext);
       lastLevel = msg.self.level;
+      hud.setQuestDefs(msg.quests ?? []);
+      hud.setQuestStates(msg.self.quests ?? []);
       for (const node of msg.nodes) nodeMap.set(node.id, node);
       world.buildWorld(msg.seed, msg.nodes, myId, msg.mobs, msg.structures);
       selfPos = msg.self.pos;
+      // One immediate observe (market + quest defs on older servers), then poll.
+      net.send({ type: "observe" });
       window.setInterval(() => net.send({ type: "observe" }), OBSERVE_INTERVAL_MS);
       return;
     }
@@ -126,6 +131,7 @@ function handleMsg(msg: ServerMsg): void {
         hud.setKD(msg.self.kills, msg.self.deaths);
         hud.setSafeZone(msg.self.inSafeZone);
         hud.setXp(msg.self.level, msg.self.xp, msg.self.xpNext);
+        hud.setQuestStates(msg.self.quests ?? []);
       }
       return;
     }
@@ -144,14 +150,24 @@ function handleMsg(msg: ServerMsg): void {
       hud.setMarket(msg.market);
       hud.setKD(msg.self.kills, msg.self.deaths);
       hud.setSafeZone(msg.self.inSafeZone);
+      hud.setQuestDefs(msg.quests ?? []);
+      hud.setQuestStates(msg.self.quests ?? []);
+      return;
+    case "quest_update":
+      hud.applyQuestUpdate(msg.quest, msg.state, msg.message, msg.completed === true);
       return;
     case "combat": {
       world.showAttack(msg.attacker.id);
       world.showHit(msg.target.id, msg.damage, msg.killed);
-      const text = msg.killed
-        ? `${msg.attacker.name} slew ${msg.target.name}${msg.loot ? ` (+${msg.loot} shards)` : ""}`
-        : `${msg.attacker.name} hit ${msg.target.name} for ${msg.damage}`;
-      hud.addCombat(text);
+      // Damage floaters cover the play-by-play; the chronicle only records
+      // kills and your own fights, so distant brawls can't flood the chat.
+      const mine = msg.attacker.id === myId || msg.target.id === myId;
+      if (msg.killed || mine) {
+        const text = msg.killed
+          ? `${msg.attacker.name} slew ${msg.target.name}${msg.loot ? ` (+${msg.loot} shards)` : ""}`
+          : `${msg.attacker.name} hit ${msg.target.name} for ${msg.damage}`;
+        hud.addCombat(text);
+      }
       if (msg.killed && msg.target.id === myId) hud.flashDeathVignette();
       return;
     }
@@ -174,9 +190,17 @@ function isTyping(): boolean {
 
 window.addEventListener("keydown", (ev) => {
   if (isTyping()) return;
+  if (ev.key === "Escape") {
+    hud.closeSidebar();
+    return;
+  }
   const k = ev.key.toLowerCase();
   if (k === "w" || k === "a" || k === "s" || k === "d") heldKeys.add(k);
-  if (k === "b") hud.toggleSidePanel(); // build menu lives in the side panel
+  // Journal thumb-tabs: I satchel · J quests · M market · B build.
+  else if (k === "i") hud.openTab("satchel");
+  else if (k === "j") hud.openTab("quests");
+  else if (k === "m") hud.openTab("market");
+  else if (k === "b") hud.openTab("build");
 });
 window.addEventListener("keyup", (ev) => heldKeys.delete(ev.key.toLowerCase()));
 window.addEventListener("blur", () => heldKeys.clear());

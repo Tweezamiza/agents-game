@@ -136,6 +136,7 @@ export interface AgentDecision {
     | "trade_post"
     | "trade_fill"
     | "attack"
+    | "quest_accept"
     | "flee"
     | "wait";
   reason?: string;
@@ -151,6 +152,7 @@ export interface AgentDecision {
   price?: number;
   order_id?: string;
   target_id?: string;
+  quest_id?: string;
 }
 
 /**
@@ -191,6 +193,9 @@ export function executeDecision(bot: Bot, rawText: string): void {
       break;
     case "attack":
       bot.send({ type: "attack", targetId: String(d.target_id) });
+      break;
+    case "quest_accept":
+      bot.send({ type: "quest_accept", questId: String(d.quest_id) });
       break;
     case "flee":
       bot.send({ type: "move", target: SAFE_ZONE_CENTER });

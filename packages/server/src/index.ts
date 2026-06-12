@@ -59,7 +59,16 @@ function observation(p: Player): ObservationMsg {
     structures: world.structures.all(),
     market: [...world.orders.values()],
     recipes: world.recipes(),
+    quests: world.quests.offeredFor(p.name),
   };
+}
+
+/** Dispatch queued quest progress/completion events to their owners. */
+function flushQuestUpdates() {
+  for (const u of world.quests.drain()) {
+    const ws = sockets.get(u.playerId);
+    if (ws) send(ws, { type: "quest_update", quest: u.quest, state: u.state, message: u.message, completed: u.completed });
+  }
 }
 
 /** Per-player private slice of the 10 Hz state frame. */
@@ -102,6 +111,7 @@ wss.on("connection", (ws) => {
       const role = msg.role === "agent" ? "agent" : "human";
       const saved = await persistence.loadCharacter(name);
       if (player) return; // a parallel join on this socket won the race
+      if (saved?.quests) world.quests.restore(name, saved.quests);
       player = world.addPlayer(name, role, saved ? persistence.restoreToPlayer(saved) : undefined);
       sockets.set(player.id, ws);
       send(ws, {
@@ -114,6 +124,7 @@ wss.on("connection", (ws) => {
         nodes: [...world.nodes.values()],
         mobs: world.mobs.living(),
         structures: world.structures.all(),
+        quests: world.quests.offeredFor(name),
       });
       broadcast(
         { type: "chat", channel: "world", from: { id: "system", name: "Emberfall", role: "human" }, text: `${name} [${role}] arrived on the isle.` },
@@ -151,6 +162,7 @@ wss.on("connection", (ws) => {
       case "craft": {
         const r = world.craft(p, String(msg.recipeId), Number(msg.qty ?? 1));
         send(ws, { type: "action_result", action: "craft", ok: r.ok, message: r.message, self: world.privateView(p) });
+        flushQuestUpdates();
         return;
       }
       case "say": {
@@ -200,12 +212,21 @@ wss.on("connection", (ws) => {
             send(targetWs, { type: "action_result", action: "attack", ok: false, message: note, self: world.privateView(target) });
           }
         }
+        flushQuestUpdates();
         return;
       }
       case "build": {
         const r = world.build(p, String(msg.structure) as StructureKind);
         send(ws, { type: "action_result", action: "build", ok: r.ok, message: r.message, self: world.privateView(p) });
         if (r.ok) broadcast({ type: "structure_update", structures: world.structures.all() });
+        flushQuestUpdates();
+        return;
+      }
+      case "quest_accept": {
+        const r = world.quests.accept(p, String(msg.questId));
+        send(ws, { type: "action_result", action: "quest_accept", ok: r.ok, message: r.message, self: world.privateView(p) });
+        if (r.ok && r.quest && r.state)
+          send(ws, { type: "quest_update", quest: r.quest, state: r.state, message: r.message });
         return;
       }
       default:
@@ -216,7 +237,7 @@ wss.on("connection", (ws) => {
   ws.on("close", () => {
     if (player) {
       console.log(`leave: ${player.name} (${player.id})`);
-      void persistence.saveCharacter(player);
+      void persistence.saveCharacter(player, world.quests.serialize(player.name));
       world.removePlayer(player.id);
       sockets.delete(player.id);
       broadcast({ type: "chat", channel: "world", from: { id: "system", name: "Emberfall", role: "human" }, text: `${player.name} left the isle.` });
@@ -262,6 +283,7 @@ setInterval(() => {
       send(ws, { type: "action_result", action: "attack", ok: false, message: note, self: world.privateView(hit.target) });
     }
   }
+  flushQuestUpdates();
   for (const text of world.drainAnnouncements()) {
     broadcast({ type: "chat", channel: "world", from: { id: "system", name: "Emberfall", role: "human" }, text });
   }
@@ -270,7 +292,7 @@ setInterval(() => {
 // Persistence sweep every 15 s: save all online characters, flush ledger.
 setInterval(() => {
   if (!persistence.enabled) return;
-  for (const p of world.players.values()) void persistence.saveCharacter(p);
+  for (const p of world.players.values()) void persistence.saveCharacter(p, world.quests.serialize(p.name));
   persistence.queueLedger(world.ledger.slice(ledgerFlushed));
   ledgerFlushed = world.ledger.length;
   void persistence.flushLedger();

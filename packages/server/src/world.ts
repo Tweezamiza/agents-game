@@ -26,6 +26,7 @@ import {
   xpForLevel,
 } from "@agentworld/protocol";
 import { MobManager } from "./mobs.js";
+import { QuestEngine } from "./quests.js";
 import { StructureManager } from "./structures.js";
 import { mulberry32 } from "./rng.js";
 
@@ -99,6 +100,7 @@ export class World {
   orders = new Map<string, MarketOrder>();
   ledger: LedgerEntry[] = [];
   readonly mobs: MobManager;
+  readonly quests: QuestEngine;
   readonly structures = new StructureManager();
   /** World-chat announcements (level-ups), drained by the server each tick. */
   private announcements: string[] = [];
@@ -109,6 +111,7 @@ export class World {
     this.seed = seed;
     this.generateNodes();
     this.mobs = new MobManager(seed);
+    this.quests = new QuestEngine(this);
   }
 
   private generateNodes() {
@@ -230,9 +233,14 @@ export class World {
       p.xp -= xpForLevel(p.level);
       p.level++;
       p.hp = this.hpMaxOf(p);
-      this.announcements.push(`${p.name} reached level ${p.level}!`);
+      this.announce(`${p.name} reached level ${p.level}!`);
     }
     if (p.level >= PROGRESSION.LEVEL_CAP) p.xp = 0;
+  }
+
+  /** Queue a world-chat system line (level-ups, story quest completions). */
+  announce(text: string): void {
+    this.announcements.push(text);
   }
 
   drainAnnouncements(): string[] {
@@ -318,6 +326,7 @@ export class World {
       this.addXp(p, stats.xp);
       const dropped = Math.random() < stats.dropChance;
       if (dropped) this.give(p, stats.drop, 1);
+      this.quests.progressEvent(p, "kill", mob.kind, 1);
       this.log("combat", mob.id, p.id, "shards", stats.shards, `${p.name} slew a ${stats.name}`);
       const lootStr = dropped ? `, 1 ${stats.drop}` : "";
       return { ok: true, message: `You slew the ${stats.name}! +${stats.xp} XP, +${stats.shards} shards${lootStr}.`, damage, targetHp: 0, killed: true, loot: stats.shards, target: who };
@@ -387,6 +396,7 @@ export class World {
     const respawned: ResourceNode[] = [];
 
     for (const p of this.players.values()) {
+      this.quests.checkExplore(p);
       const territoryBonus = this.structures.ownsTerritoryAt(p.id, p.pos) ? TERRITORY.AP_REGEN_BONUS : 0;
       p.ap = Math.min(WORLD.AP_MAX, p.ap + WORLD.AP_REGEN + territoryBonus);
       if (p.attackCooldown > 0) p.attackCooldown--;
@@ -409,6 +419,7 @@ export class World {
             node.remaining--;
             this.give(p, item, qty);
             this.addXp(p, PROGRESSION.XP_GATHER);
+            this.quests.progressEvent(p, "gather", item, qty);
             this.log("gather", "world", p.id, item, qty, `${p.name} gathered from ${node.id}`);
             if (node.remaining <= 0) this.respawnQueue.set(node.id, NODE_RESPAWN_TICKS);
             completions.push({
@@ -493,6 +504,7 @@ export class World {
     for (const [item, n] of Object.entries(recipe.inputs)) this.give(p, item as ItemId, -n * qty);
     this.give(p, recipe.output, recipe.outputQty * qty);
     this.addXp(p, PROGRESSION.XP_CRAFT * qty);
+    this.quests.progressEvent(p, "craft", recipe.id, qty);
     this.log("craft", p.id, p.id, recipe.output, recipe.outputQty * qty, `${p.name} crafted ${recipeId} x${qty}`);
     return { ok: true, message: `Crafted ${recipe.outputQty * qty} ${recipe.output}.` };
   }
@@ -511,6 +523,7 @@ export class World {
     p.ap -= AP_COST.BUILD;
     for (const [item, n] of Object.entries(spec.cost)) this.give(p, item as ItemId, -n);
     const structure = this.structures.place(p.id, p.name, kind, p.pos);
+    this.quests.progressEvent(p, "build", kind, 1);
     this.log("build", p.id, "world", "shards", 0, `${p.name} built a ${kind} at (${p.pos.x.toFixed(0)}, ${p.pos.z.toFixed(0)})`);
     const claim = kind === "banner" ? ` Your territory now spans ${TERRITORY.BANNER_RADIUS}u around it.` : "";
     return { ok: true, message: `Built a ${spec.name}.${claim}`, structure };
@@ -577,7 +590,8 @@ export class World {
 
   // -- Helpers ----------------------------------------------------------------
 
-  private give(p: Player, item: ItemId, qty: number) {
+  /** Inventory delta (also used by the quest engine for reward items). */
+  give(p: Player, item: ItemId, qty: number) {
     const next = (p.inventory[item] ?? 0) + qty;
     if (next <= 0) delete p.inventory[item];
     else p.inventory[item] = next;
@@ -613,6 +627,7 @@ export class World {
       xp: p.xp,
       xpNext: p.level >= PROGRESSION.LEVEL_CAP ? 0 : xpForLevel(p.level),
       inSafeZone: this.inSafeZone(p.pos),
+      quests: this.quests.statesFor(p.name),
     };
   }
 
@@ -656,11 +671,13 @@ export class World {
       `You are ${p.name} (level ${p.level}, ${p.xp}/${p.level >= PROGRESSION.LEVEL_CAP ? "max" : xpForLevel(p.level)} XP) at (${p.pos.x.toFixed(0)}, ${p.pos.z.toFixed(0)}) on Emberfall Isle. ` +
       `HP ${p.hp}/${this.hpMaxOf(p)}, AP ${Math.floor(p.ap)}/${WORLD.AP_MAX}, ${p.shards} shards (K/D ${p.kills}/${p.deaths}). ` +
       `Inventory: ${inv}. ${safety}${territory} ` +
+      `${this.quests.summaryFor(p)} ` +
       `Nearby resources: ${nodeStr}. Nearby creatures: ${mobStr}. Nearby citizens: ${playerStr}. ` +
       `Nearby structures: ${structureStr}. Market: ${orderStr}. ` +
       `Actions: move, gather, craft (${RECIPES.map((r) => r.id).join("/")}), say, trade_post, trade_fill, ` +
       `attack (players or creatures by id, range ${COMBAT.ATTACK_RANGE}, no PvP in safe zone; slaying creatures grants XP/shards/loot), ` +
-      `build (${Object.keys(STRUCTURES).join("/")} — campfires heal, banners claim territory).`
+      `build (${Object.keys(STRUCTURES).join("/")} — campfires heal, banners claim territory), ` +
+      `quest_accept (accept an offered quest by id — objectives complete automatically as you play).`
     );
   }
 

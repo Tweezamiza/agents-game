@@ -49,7 +49,7 @@ interface Waiter {
 
 interface BufferEntry {
   t: number;
-  kind: "chat" | "action_result" | "combat";
+  kind: "chat" | "action_result" | "combat" | "quest";
   text: string;
   read: boolean;
 }
@@ -220,6 +220,10 @@ class GameClient {
         this.pushBuffer("combat", this.describeCombat(msg));
         break;
       }
+      case "quest_update": {
+        this.pushBuffer("quest", msg.message);
+        break;
+      }
       case "node_update":
         this.nodes.set(msg.node.id, msg.node);
         break;
@@ -322,12 +326,15 @@ function fmtSelf(self: PlayerPrivate): string {
     Object.entries(self.inventory)
       .map(([k, v]) => `${v} ${k}`)
       .join(", ") || "empty";
+  const quests = self.quests ?? [];
+  const active = quests.filter((q) => !q.done).length;
   return (
     `position: (${self.pos.x.toFixed(1)}, ${self.pos.z.toFixed(1)}) | ` +
     `level ${self.level} (${self.xpNext > 0 ? `${self.xp}/${self.xpNext} XP` : "max"}) | ` +
     `HP: ${self.hp}/${self.hpMax}${self.inSafeZone ? " (in safe zone)" : ""} | ` +
     `AP: ${self.ap}/${self.apMax} | shards: ${self.shards} | ` +
     `kills/deaths: ${self.kills}/${self.deaths} | ` +
+    `quests: ${active} active, ${quests.length - active} completed | ` +
     `busy: ${self.busy} | inventory: ${inv}`
   );
 }
@@ -358,13 +365,14 @@ server.registerTool(
   "look",
   {
     description:
-      "Observe your surroundings on Emberfall Isle. Returns a natural-language summary, any unread chat messages, and the full structured state as JSON: your private state (self, incl. level/xp), nearby resource nodes (with ids to pass to gather), nearby players, nearby mobs (with ids to pass to attack), player-built structures/territory claims, open market orders, and craftable recipes. Call this first, and again whenever you need fresh information (e.g. after walking).",
+      "Observe your surroundings on Emberfall Isle. Returns a natural-language summary, any unread chat messages and quest journal updates, and the full structured state as JSON: your private state (self, incl. level/xp/quest progress), nearby resource nodes (with ids to pass to gather), nearby players, nearby mobs (with ids to pass to attack), player-built structures/territory claims, open market orders, craftable recipes, and quests offered to you (with ids to pass to accept_quest). Call this first, and again whenever you need fresh information (e.g. after walking).",
     inputSchema: {},
   },
   async () => {
     const obs = await client.observe();
     const chat = client.takeUnread("chat");
     const combat = client.takeUnread("combat");
+    const questEvents = client.takeUnread("quest");
     const structured = {
       self: obs.self,
       nearbyNodes: obs.nearbyNodes,
@@ -373,10 +381,12 @@ server.registerTool(
       structures: obs.structures,
       market: obs.market,
       recipes: obs.recipes,
+      quests: obs.quests,
     };
     const parts = [
       obs.summary,
       fmtSelf(obs.self),
+      questEvents.length ? `Quest journal updates:\n${questEvents.join("\n")}` : "No quest updates.",
       combat.length ? `Recent combat:\n${combat.join("\n")}` : "No recent combat.",
       chat.length ? `Unread chat:\n${chat.join("\n")}` : "No unread chat.",
       `Structured state:\n${JSON.stringify(structured, null, 2)}`,
@@ -503,6 +513,56 @@ server.registerTool(
   },
   async ({ structure }) => {
     const result = await client.action({ type: "build", structure });
+    return text(fmtActionResult(result));
+  },
+);
+
+server.registerTool(
+  "quests",
+  {
+    description:
+      "Your quest journal: active quests with progress, completed quests, and everything currently offered (the story campaign from the villagers of Emberfall plus the rotating side-quest board — 3 side quests, new board every 10 minutes). Objectives complete automatically as you gather/craft/slay/build/explore; rewards (shards, XP, sometimes items) are granted the moment an objective is met. Accept offered quests with accept_quest. Max 3 active side quests; story quests are unlimited and unlock in a chain.",
+    inputSchema: {},
+  },
+  async () => {
+    const obs = await client.observe();
+    const states = new Map((obs.self.quests ?? []).map((q) => [q.questId, q]));
+    const defOf = new Map(obs.quests.map((q) => [q.id, q]));
+    const fmt = (id: string) => {
+      const d = defOf.get(id);
+      const s = states.get(id);
+      if (!d) return `${id} (unknown quest)`;
+      const o = d.objective;
+      const head = `${d.id}: "${d.title}" — ${d.giver}${d.side ? " [side]" : " [story]"}`;
+      const goal = `${o.kind} ${o.target} x${o.qty}`;
+      const reward = `${d.rewardShards} shards, ${d.rewardXp} XP${d.rewardItems ? `, ${Object.entries(d.rewardItems).map(([k, v]) => `${v} ${k}`).join(", ")}` : ""}`;
+      const prog = s ? ` | progress ${s.progress}/${o.qty}` : "";
+      return `${head} | ${goal} | reward: ${reward}${prog}\n  "${d.story}"`;
+    };
+    const active = [...states.values()].filter((s) => !s.done).map((s) => fmt(s.questId));
+    const done = [...states.values()].filter((s) => s.done).map((s) => {
+      const d = defOf.get(s.questId);
+      return d ? `${d.id}: "${d.title}" (completed)` : `${s.questId} (completed)`;
+    });
+    const offered = obs.quests.filter((q) => !states.has(q.id)).map((q) => fmt(q.id));
+    const parts = [
+      active.length ? `ACTIVE (${active.length}):\n${active.join("\n")}` : "No active quests.",
+      offered.length ? `OFFERED (${offered.length}) — accept with accept_quest:\n${offered.join("\n")}` : "Nothing on offer right now.",
+      done.length ? `COMPLETED (${done.length}):\n${done.join("\n")}` : "",
+    ].filter(Boolean);
+    return text(parts.join("\n\n"));
+  },
+);
+
+server.registerTool(
+  "accept_quest",
+  {
+    description:
+      "Accept an offered quest by id (get ids from quests or look). Story quests unlock one another in a chain; side quests come from the rotating board (max 3 active at once). Once accepted, objectives progress automatically as you play and rewards land instantly on completion — there is no turn-in step.",
+    inputSchema: { quest_id: z.string() },
+  },
+  async ({ quest_id }) => {
+    const result = await client.action({ type: "quest_accept", questId: quest_id });
     return text(fmtActionResult(result));
   },
 );

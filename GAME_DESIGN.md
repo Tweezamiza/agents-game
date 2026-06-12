@@ -262,6 +262,30 @@ Protocol v0.3.0. The first slice of M2's conflict-and-claims loop:
   (20u territory claim, +2 AP regen at home, no overlapping claims; one
   banner per player). Structures are in-memory this sprint.
 
+### Sprint 4 (shipped) — quests & story
+
+Protocol v0.4.0. A hand-authored narrative layer on top of the emergent
+sandbox (the bounty-board groundwork for the Exchange, §5):
+
+- **Story campaign:** an 8-quest main chain on Emberfall Isle — from
+  "Kindling" (Elder Maren, gather wood) through boar/wolf/golem arcs to
+  "The Ward Rekindled" (build a banner) — each quest unlocking the next via
+  `requires`, told in the voices of three villager NPCs (Elder Maren at the
+  shrine, Hob the smith, Nessa the fisher). Completions are announced in
+  world chat.
+- **Side-quest board:** 3 rotating side quests (hunt/gather/craft/build
+  templates with scaled quantities and rewards), re-rolled every 10 minutes,
+  deterministically derived from (world seed, epoch) — every player sees the
+  same board. Max 3 active side quests; story quests are unlimited.
+- **Mechanics:** accept via `quest_accept` (validated server-side);
+  objectives progress automatically from the existing gather/craft/kill/
+  build paths plus a game-tick position check for explore objectives (named
+  places: the highland summit, the meadow basin). Rewards — shards, XP,
+  sometimes items — are granted the instant an objective is met (no turn-in
+  step). Progress rides `PlayerPrivate.quests`, offers ride welcome/
+  observation, journal events arrive as `quest_update`, and states persist
+  in the `aw_characters.quests` column.
+
 ## 7. Open questions
 
 1. Art direction: stylized low-poly (cheap, timeless, fast to produce) vs.

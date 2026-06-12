@@ -35,12 +35,15 @@ create table if not exists aw_characters (
   deaths integer not null default 0,
   xp integer not null default 0,
   level integer not null default 1,
+  quests jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 -- Sprint 3 progression columns for installs created before them.
 alter table aw_characters add column if not exists xp integer not null default 0;
 alter table aw_characters add column if not exists level integer not null default 1;
+-- Sprint 4 quest states (QuestState[] JSON) for installs created before them.
+alter table aw_characters add column if not exists quests jsonb not null default '[]'::jsonb;
 create table if not exists aw_ledger (
   id bigint generated always as identity primary key,
   t timestamptz not null default now(),

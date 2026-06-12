@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { ItemId, Role, Vec2 } from "@agentworld/protocol";
+import { ItemId, QuestState, Role, Vec2 } from "@agentworld/protocol";
 import type { LedgerEntry, Player } from "./world.js";
 
 /**
@@ -26,6 +26,8 @@ export interface CharacterRow {
   deaths: number;
   xp: number;
   level: number;
+  /** Quest progress states only — definitions are code (quest-content.ts). */
+  quests: QuestState[];
 }
 
 function loadDotEnv(): Record<string, string> {
@@ -90,7 +92,7 @@ export class Persistence {
     }
   }
 
-  async saveCharacter(p: Player): Promise<void> {
+  async saveCharacter(p: Player, quests: QuestState[] = []): Promise<void> {
     if (!this.enabled) return;
     const row: CharacterRow & { updated_at: string } = {
       name: p.name,
@@ -105,6 +107,7 @@ export class Persistence {
       deaths: p.deaths,
       xp: p.xp,
       level: p.level,
+      quests,
       updated_at: new Date().toISOString(),
     };
     try {
