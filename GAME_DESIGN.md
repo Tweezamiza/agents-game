@@ -1,4 +1,4 @@
-# AGENTWORLD — Design Document (v0.2)
+# AGENTWORLD — Design Document (v0.3)
 
 *A persistent 3D MMORPG where AI agents and humans play together as equals —
 and where agents create real-world value for their owners.*
@@ -246,6 +246,21 @@ real money buys presence and services, never in-game power.
 **M0 acceptance test:** an unmodified Claude agent, given only the MCP server
 URL and the system prompt "you live here, survive and prosper," plays
 meaningfully for an hour alongside a human in the 3D viewer.
+
+### Sprint 3 (shipped) — PvE, progression, territory
+
+Protocol v0.3.0. The first slice of M2's conflict-and-claims loop:
+
+- **PvE mobs:** boars (meadows, passive), wolves (forest, aggressive), and
+  highland golems (slow, hits hard) — seed-deterministic spawns, 1s-tick AI
+  (wander, aggro, chase, leash, heal), drops feeding new recipes.
+- **Progression:** XP from kills/gathering/crafting, 20 levels
+  (`50·n^1.5` curve), +4 max HP and +1 damage per level, full heal +
+  world-chat fanfare on level-up. Gear: leather_armor (-25% incoming),
+  fang_blade (+6 damage, stacks with ember_charm), ward_totem.
+- **Territory & building:** campfires (heal aura), walls (markers), banners
+  (20u territory claim, +2 AP regen at home, no overlapping claims; one
+  banner per player). Structures are in-memory this sprint.
 
 ## 7. Open questions
 

@@ -26,18 +26,23 @@ import {
 } from "@babylonjs/core";
 import {
   COMBAT,
+  type MobPublic,
   type PlayerPublic,
   type ResourceKind,
   type ResourceNode,
   SAFE_ZONE_CENTER,
+  type Structure,
   WORLD,
   terrainHeight,
 } from "@agentworld/protocol";
+import { MobLayer } from "./mobs3d";
+import { StructureLayer } from "./structures3d";
 
 export interface PickHandlers {
   onTerrain: (x: number, z: number) => void;
   onNode: (node: ResourceNode) => void;
   onPlayer: (playerId: string) => void;
+  onMob: (mobId: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +163,8 @@ export class World3D {
   private readonly floaters: DamageFloater[] = [];
   private myId: string | null = null;
   private hoveredId: string | null = null;
+  private mobLayer: MobLayer | null = null;
+  private structureLayer: StructureLayer | null = null;
   private safeZoneMat: StandardMaterial | null = null;
   private waterMat: StandardMaterial | null = null;
   private waterBump: Texture | null = null;
@@ -266,6 +273,10 @@ export class World3D {
           this.handlers.onPlayer(id);
           return;
         }
+        if (this.mobLayer?.has(id)) {
+          this.handlers.onMob(id);
+          return;
+        }
         const nv = this.nodeVisuals.get(id);
         if (nv) {
           this.handlers.onNode(nv.data);
@@ -345,7 +356,7 @@ export class World3D {
   // World construction (after `welcome`)
   // -------------------------------------------------------------------------
 
-  buildWorld(seed: number, nodes: ResourceNode[], myId: string): void {
+  buildWorld(seed: number, nodes: ResourceNode[], myId: string, mobs: MobPublic[] = [], structures: Structure[] = []): void {
     if (this.built) return;
     this.built = true;
     this.seed = seed;
@@ -353,6 +364,11 @@ export class World3D {
     this.buildTerrain();
     this.buildWater();
     this.buildSafeZoneRing();
+    const ground = (x: number, z: number) => this.groundY(x, z);
+    this.mobLayer = new MobLayer(this.scene, this.shadows, ground);
+    this.structureLayer = new StructureLayer(this.scene, this.shadows, ground);
+    this.mobLayer.update(mobs);
+    this.structureLayer.setAll(structures);
     this.pendingNodes = nodes.slice();
     void this.loadAssets().then(() => {
       this.buildCrystalTemplate();
@@ -682,6 +698,16 @@ export class World3D {
     this.applyNodeState(node);
   }
 
+  /** Apply a 10 Hz mob frame (positions, HP, deaths-by-absence). */
+  updateMobs(mobs: MobPublic[]): void {
+    this.mobLayer?.update(mobs);
+  }
+
+  /** Reconcile the structure layer with the authoritative full list. */
+  setStructures(structures: Structure[]): void {
+    this.structureLayer?.setAll(structures);
+  }
+
   /** Apply remaining-count visual state: depleted nodes shrink. */
   updateNode(node: ResourceNode): void {
     const nv = this.nodeVisuals.get(node.id);
@@ -743,7 +769,7 @@ export class World3D {
         pv.prevZ = p.pos.z;
         pv.prevT = now;
       }
-      const tagText = p.role === "agent" ? `⚙ ${p.name}` : p.name;
+      const tagText = `${p.role === "agent" ? "⚙ " : ""}${p.name} · ${p.level}`;
       const hp = Math.max(0, Math.round(p.hp));
       if (tagText !== pv.tagText || hp !== pv.hp || p.hpMax !== pv.hpMax) {
         pv.tagText = tagText;
@@ -856,7 +882,7 @@ export class World3D {
       lift: model.position.y,
     };
     this.play(pv, anim.idle, true);
-    const tagText = p.role === "agent" ? `⚙ ${p.name}` : p.name;
+    const tagText = `${p.role === "agent" ? "⚙ " : ""}${p.name} · ${p.level}`;
     this.drawTag(tag, tagText, p.role, p.hpMax > 0 ? pv.hp / p.hpMax : 0);
     pv.tagText = tagText;
     return pv;
@@ -918,28 +944,35 @@ export class World3D {
     pv.attackUntil = now + Math.min(1200, (span * 1000) / 1.4);
   }
 
-  /** Flash the target red and float a damage number above their head. */
-  showHit(playerId: string, damage: number, killed: boolean): void {
-    const pv = this.playerVisuals.get(playerId);
-    if (!pv) return;
+  /** Flash the target (player or mob) red and float a damage number. */
+  showHit(targetId: string, damage: number, killed: boolean): void {
     const now = performance.now();
-    pv.flashUntil = now + HIT_FLASH_MS;
-    if (killed) {
-      pv.deadUntil = now + DEATH_MS;
-      pv.attackUntil = 0;
-      if (pv.anim.death) {
-        if (pv.current) pv.current.stop();
-        pv.anim.death.start(false, 1.1);
-        pv.current = pv.anim.death;
+    let at: Vector3 | null = null;
+    const pv = this.playerVisuals.get(targetId);
+    if (pv) {
+      pv.flashUntil = now + HIT_FLASH_MS;
+      if (killed) {
+        pv.deadUntil = now + DEATH_MS;
+        pv.attackUntil = 0;
+        if (pv.anim.death) {
+          if (pv.current) pv.current.stop();
+          pv.anim.death.start(false, 1.1);
+          pv.current = pv.anim.death;
+        }
       }
+      at = pv.root.position;
+    } else if (this.mobLayer?.has(targetId)) {
+      this.mobLayer.hit(targetId);
+      at = this.mobLayer.positionOf(targetId);
     }
+    if (!at) return;
 
     const id = this.floaterSeq++;
     const plane = MeshBuilder.CreatePlane(`dmg:${id}`, { width: 1.5, height: 0.75 }, this.scene);
     plane.billboardMode = Mesh.BILLBOARDMODE_ALL;
     plane.isPickable = false;
     plane.applyFog = false;
-    plane.position.copyFrom(pv.root.position);
+    plane.position.copyFrom(at);
     plane.position.y += 2.6;
     const tex = new DynamicTexture(`dmgTex:${id}`, { width: 192, height: 96 }, this.scene, true);
     tex.hasAlpha = true;
@@ -958,6 +991,9 @@ export class World3D {
     const id = pick?.pickedMesh?.metadata as string | null;
     if (typeof id === "string" && id !== this.myId && this.playerVisuals.has(id)) {
       this.setHovered(id);
+    } else if (typeof id === "string" && this.mobLayer?.has(id)) {
+      this.setHovered(null);
+      this.canvas.style.cursor = "crosshair";
     } else {
       this.setHovered(null);
     }
@@ -1050,6 +1086,10 @@ export class World3D {
       f.mesh.position.y = f.baseY + t * FLOATER_RISE;
       f.mat.alpha = 1 - t * t;
     }
+
+    // Mobs lerp gently (they move on 1 s game ticks); fires flicker.
+    this.mobLayer?.animate(now, 1 - Math.exp(-3 * dt));
+    this.structureLayer?.animate(now);
 
     // Slow sanctuary pulse + shrine ember flicker.
     if (this.safeZoneMat) {

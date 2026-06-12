@@ -19,7 +19,6 @@ import { WebSocket } from "ws";
 import {
   ActionResultMsg,
   ClientMsg,
-  COMBAT,
   CombatEvent,
   ItemId,
   MarketOrder,
@@ -233,7 +232,7 @@ class GameClient {
     }
   }
 
-  /** Render a combat broadcast as one line, e.g. "Bandit hit you for 12 (62/100 HP)". */
+  /** Render a combat broadcast as one line, e.g. "Bandit hit you for 12 (62 HP left)". */
   private describeCombat(msg: CombatEvent): string {
     const attacker = msg.attacker.id === this.playerId ? "You" : msg.attacker.name;
     const target = msg.target.id === this.playerId ? "you" : msg.target.name;
@@ -241,7 +240,7 @@ class GameClient {
       const loot = msg.loot ? `, looting ${msg.loot} shards` : "";
       return `${attacker} slew ${target}${loot}!`;
     }
-    return `${attacker} hit ${target} for ${msg.damage} (${msg.targetHp}/${COMBAT.HP_MAX} HP)`;
+    return `${attacker} hit ${target} for ${msg.damage} (${msg.targetHp} HP left)`;
   }
 
   private waitFor(
@@ -325,6 +324,7 @@ function fmtSelf(self: PlayerPrivate): string {
       .join(", ") || "empty";
   return (
     `position: (${self.pos.x.toFixed(1)}, ${self.pos.z.toFixed(1)}) | ` +
+    `level ${self.level} (${self.xpNext > 0 ? `${self.xp}/${self.xpNext} XP` : "max"}) | ` +
     `HP: ${self.hp}/${self.hpMax}${self.inSafeZone ? " (in safe zone)" : ""} | ` +
     `AP: ${self.ap}/${self.apMax} | shards: ${self.shards} | ` +
     `kills/deaths: ${self.kills}/${self.deaths} | ` +
@@ -346,13 +346,19 @@ const ITEM_IDS = [
   "brick",
   "stone_axe",
   "ember_charm",
+  "hide",
+  "fang",
+  "golem_core",
+  "leather_armor",
+  "fang_blade",
+  "ward_totem",
 ] as const;
 
 server.registerTool(
   "look",
   {
     description:
-      "Observe your surroundings on Emberfall Isle. Returns a natural-language summary, any unread chat messages, and the full structured state as JSON: your private state (self), nearby resource nodes (with ids to pass to gather), nearby players, open market orders, and craftable recipes. Call this first, and again whenever you need fresh information (e.g. after walking).",
+      "Observe your surroundings on Emberfall Isle. Returns a natural-language summary, any unread chat messages, and the full structured state as JSON: your private state (self, incl. level/xp), nearby resource nodes (with ids to pass to gather), nearby players, nearby mobs (with ids to pass to attack), player-built structures/territory claims, open market orders, and craftable recipes. Call this first, and again whenever you need fresh information (e.g. after walking).",
     inputSchema: {},
   },
   async () => {
@@ -363,6 +369,8 @@ server.registerTool(
       self: obs.self,
       nearbyNodes: obs.nearbyNodes,
       nearbyPlayers: obs.nearbyPlayers,
+      nearbyMobs: obs.nearbyMobs,
+      structures: obs.structures,
       market: obs.market,
       recipes: obs.recipes,
     };
@@ -407,7 +415,7 @@ server.registerTool(
   "craft",
   {
     description:
-      "Craft an item from a recipe. Recipes: plank (2 wood), brick (2 stone), stone_axe (1 wood + 2 stone, gives +1 wood per gather), ember_charm (1 ember_crystal + 2 planks). Costs 10 AP per craft. Optional qty crafts multiple at once (max 10).",
+      "Craft an item from a recipe. Recipes: plank (2 wood), brick (2 stone), stone_axe (1 wood + 2 stone, gives +1 wood per gather), ember_charm (1 ember_crystal + 2 planks, +4 attack damage), leather_armor (3 hide, -25% incoming damage), fang_blade (2 fang + 1 plank, +6 attack damage, stacks with charm), ward_totem (1 golem_core + 2 brick, required to claim territory with a banner). Costs 10 AP per craft and grants 3 XP. Optional qty crafts multiple at once (max 10).",
     inputSchema: { recipe_id: z.string(), qty: z.number().int().min(1).max(10).optional() },
   },
   async ({ recipe_id, qty }) => {
@@ -477,11 +485,24 @@ server.registerTool(
   "attack",
   {
     description:
-      "Attack another player by id (get ids from look's nearbyPlayers). You must be within 2.5 units of the target — walk into range first. Costs 8 AP, with a ~2 second cooldown between attacks. PvP is disabled inside the shrine safe zone (radius 14 around the island's central spawn shrine) — attacks there are refused. Killing a player loots 25% of the victim's shards for you; beware: if YOU are killed, you lose 25% of YOUR shards and respawn at the shrine. Returns the attack outcome (damage dealt, target HP, any loot).",
+      "Attack a player (id 'p-...', from look's nearbyPlayers) or a mob (id 'm-...', from look's nearbyMobs — boars are passive, wolves and golems attack on sight). You must be within 2.5 units of the target — walk into range first. Costs 8 AP, with a ~2 second cooldown between attacks. PvP is disabled inside the shrine safe zone (radius 14) — attacks there are refused. Killing a player loots 25% of the victim's shards and grants 40 XP; slaying a mob grants XP, shards, and a chance of a crafting drop (boar: hide, wolf: fang, golem: golem_core). If YOU are killed by a player you lose 25% of your shards (10% to a mob) and respawn at the shrine. Returns the attack outcome (damage dealt, target HP, any loot).",
     inputSchema: { target_id: z.string() },
   },
   async ({ target_id }) => {
     const result = await client.action({ type: "attack", targetId: target_id });
+    return text(fmtActionResult(result));
+  },
+);
+
+server.registerTool(
+  "build",
+  {
+    description:
+      "Build a structure at your current position. Structures: campfire (2 wood + 1 stone — heals players within 6 units by +1 HP/second), wall (3 brick — a claim marker), banner (1 ward_totem + 2 plank — claims a 20-unit-radius territory; inside your own territory you regenerate +2 AP/second; max 1 banner, rebuilding moves it). Costs 5 AP. You cannot build inside the village safe zone or someone else's territory, and territory claims cannot overlap.",
+    inputSchema: { structure: z.enum(["campfire", "wall", "banner"]) },
+  },
+  async ({ structure }) => {
+    const result = await client.action({ type: "build", structure });
     return text(fmtActionResult(result));
   },
 );

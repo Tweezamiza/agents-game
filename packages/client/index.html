@@ -57,10 +57,26 @@
       background: linear-gradient(90deg, #2d6a4f, #74c69d);
       transition: width 0.25s ease;
     }
-    #hp-text, #ap-text {
+    #hp-text, #ap-text, #xp-text {
       position: absolute; inset: 0; text-align: center; font-size: 12px;
       line-height: 18px; color: #f0ead8; text-shadow: 0 1px 2px #000;
     }
+    #xp-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+    #level-badge {
+      width: 26px; height: 26px; flex: none; border-radius: 50%;
+      border: 1px solid var(--gold); color: var(--gold); background: #1a1426;
+      text-align: center; line-height: 24px; font-size: 13px;
+    }
+    #xp-bar {
+      position: relative; flex: 1; height: 12px; border: 1px solid var(--panel-border);
+      border-radius: 4px; background: #1a1426; overflow: hidden;
+    }
+    #xp-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #8a6a2f, #c9a557);
+      transition: width 0.25s ease;
+    }
+    #xp-text { font-size: 10px; line-height: 12px; }
     #shards { margin-top: 6px; font-size: 14px; color: var(--gold); }
     #kd { margin-top: 4px; font-size: 12px; color: var(--ink); }
     #sanctuary {
@@ -68,6 +84,16 @@
       font-style: italic; text-shadow: 0 0 8px rgba(126, 200, 227, 0.5);
     }
     #conn-status { margin-top: 4px; font-size: 11px; color: var(--muted); }
+
+    /* ---- level-up flash ---- */
+    #level-flash {
+      position: absolute; top: 22%; left: 50%; transform: translateX(-50%) scale(0.85);
+      z-index: 60; pointer-events: none; color: var(--gold);
+      font-size: 34px; letter-spacing: 5px;
+      text-shadow: 0 0 24px rgba(201, 165, 87, 0.95), 0 2px 4px #000;
+      opacity: 0; transition: opacity 0.5s ease, transform 0.5s ease;
+    }
+    #level-flash.active { opacity: 1; transform: translateX(-50%) scale(1); }
 
     /* ---- death vignette ---- */
     #death-vignette {
@@ -134,7 +160,10 @@
       border-radius: 4px; padding: 3px 10px; font-family: inherit; font-size: 12px;
       cursor: pointer; white-space: nowrap;
     }
-    button.action:hover { border-color: var(--gold); color: var(--gold); }
+    button.action:hover:enabled { border-color: var(--gold); color: var(--gold); }
+    button.action:disabled {
+      opacity: 0.4; cursor: not-allowed;
+    }
     .order-row {
       display: flex; align-items: center; justify-content: space-between;
       gap: 6px; margin: 3px 0; font-size: 12px;
@@ -186,6 +215,10 @@
     <h3>Vitality</h3>
     <div id="hp-bar"><div id="hp-fill"></div><div id="hp-text">— / —</div></div>
     <div id="ap-bar"><div id="ap-fill"></div><div id="ap-text">— / —</div></div>
+    <div id="xp-row">
+      <div id="level-badge">1</div>
+      <div id="xp-bar"><div id="xp-fill"></div><div id="xp-text">— XP</div></div>
+    </div>
     <div id="shards">◆ Shards: 0</div>
     <div id="kd">⚔ Kills: 0 · Deaths: 0</div>
     <div id="sanctuary">☩ Sanctuary — no harm may pass</div>
@@ -193,6 +226,7 @@
   </div>
 
   <div id="death-vignette"></div>
+  <div id="level-flash"></div>
 
   <div id="chat-panel" class="hud panel">
     <h3>Chronicle</h3>
@@ -212,6 +246,10 @@
     <div class="section">
       <h3>Crafting</h3>
       <div id="craft-list"></div>
+    </div>
+    <div class="section">
+      <h3>Build</h3>
+      <div id="build-list"></div>
     </div>
     <div class="section">
       <h3>Market</h3>

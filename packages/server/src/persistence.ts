@@ -24,6 +24,8 @@ export interface CharacterRow {
   inventory: Partial<Record<ItemId, number>>;
   kills: number;
   deaths: number;
+  xp: number;
+  level: number;
 }
 
 function loadDotEnv(): Record<string, string> {
@@ -101,6 +103,8 @@ export class Persistence {
       inventory: p.inventory,
       kills: p.kills,
       deaths: p.deaths,
+      xp: p.xp,
+      level: p.level,
       updated_at: new Date().toISOString(),
     };
     try {
@@ -144,7 +148,7 @@ export class Persistence {
     }
   }
 
-  restoreToPlayer(row: CharacterRow): { pos: Vec2; ap: number; hp: number; shards: number; inventory: Partial<Record<ItemId, number>>; kills: number; deaths: number } {
+  restoreToPlayer(row: CharacterRow): { pos: Vec2; ap: number; hp: number; shards: number; inventory: Partial<Record<ItemId, number>>; kills: number; deaths: number; xp: number; level: number } {
     return {
       pos: { x: row.x, z: row.z },
       ap: row.ap,
@@ -153,6 +157,9 @@ export class Persistence {
       inventory: row.inventory ?? {},
       kills: row.kills,
       deaths: row.deaths,
+      // Rows written before Sprint 3 have no progression columns yet.
+      xp: row.xp ?? 0,
+      level: row.level ?? 1,
     };
   }
 }

@@ -33,9 +33,14 @@ create table if not exists aw_characters (
   inventory jsonb not null default '{}'::jsonb,
   kills integer not null default 0,
   deaths integer not null default 0,
+  xp integer not null default 0,
+  level integer not null default 1,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+-- Sprint 3 progression columns for installs created before them.
+alter table aw_characters add column if not exists xp integer not null default 0;
+alter table aw_characters add column if not exists level integer not null default 1;
 create table if not exists aw_ledger (
   id bigint generated always as identity primary key,
   t timestamptz not null default now(),

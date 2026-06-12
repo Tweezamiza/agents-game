@@ -3,10 +3,13 @@ import { WebSocket, WebSocketServer } from "ws";
 import {
   ClientMsg,
   ObservationMsg,
+  PROGRESSION,
   PROTOCOL_VERSION,
   ServerMsg,
+  StructureKind,
   WORLD,
   distance,
+  xpForLevel,
 } from "@agentworld/protocol";
 import { Player, World } from "./world.js";
 import { Persistence } from "./persistence.js";
@@ -52,8 +55,21 @@ function observation(p: Player): ObservationMsg {
     self: world.privateView(p),
     nearbyPlayers: world.nearbyPlayers(p),
     nearbyNodes: world.nearbyNodes(p),
+    nearbyMobs: world.nearbyMobs(p),
+    structures: world.structures.all(),
     market: [...world.orders.values()],
     recipes: world.recipes(),
+  };
+}
+
+/** Per-player private slice of the 10 Hz state frame. */
+function selfSlice(p: Player) {
+  return {
+    ap: Math.floor(p.ap),
+    shards: p.shards,
+    level: p.level,
+    xp: p.xp,
+    xpNext: p.level >= PROGRESSION.LEVEL_CAP ? 0 : xpForLevel(p.level),
   };
 }
 
@@ -96,6 +112,8 @@ wss.on("connection", (ws) => {
         seed: world.seed,
         self: world.privateView(player),
         nodes: [...world.nodes.values()],
+        mobs: world.mobs.living(),
+        structures: world.structures.all(),
       });
       broadcast(
         { type: "chat", channel: "world", from: { id: "system", name: "Emberfall", role: "human" }, text: `${name} [${role}] arrived on the isle.` },
@@ -160,27 +178,34 @@ wss.on("connection", (ws) => {
         send(ws, observation(p));
         return;
       case "attack": {
-        const target = world.players.get(String(msg.targetId));
         const r = world.attack(p, String(msg.targetId));
         send(ws, { type: "action_result", action: "attack", ok: r.ok, message: r.message, self: world.privateView(p) });
-        if (r.ok && target) {
+        if (r.ok && r.target) {
           broadcast({
             type: "combat",
             attacker: { id: p.id, name: p.name },
-            target: { id: target.id, name: target.name },
+            target: r.target,
             damage: r.damage ?? 0,
-            targetHp: r.targetHp ?? target.hp,
+            targetHp: r.targetHp ?? 0,
             killed: r.killed ?? false,
             loot: r.loot,
           });
-          const targetWs = sockets.get(target.id);
-          if (targetWs) {
+          // Player victims get a personal note; mobs suffer in silence.
+          const target = world.players.get(r.target.id);
+          const targetWs = target ? sockets.get(target.id) : undefined;
+          if (target && targetWs) {
             const note = r.killed
               ? `You were slain by ${p.name} and lost ${r.loot ?? 0} shards. You wake at the shrine.`
-              : `${p.name} hit you for ${r.damage} (${target.hp}/100 HP). Fight back or flee!`;
+              : `${p.name} hit you for ${r.damage} (${target.hp}/${world.hpMaxOf(target)} HP). Fight back or flee!`;
             send(targetWs, { type: "action_result", action: "attack", ok: false, message: note, self: world.privateView(target) });
           }
         }
+        return;
+      }
+      case "build": {
+        const r = world.build(p, String(msg.structure) as StructureKind);
+        send(ws, { type: "action_result", action: "build", ok: r.ok, message: r.message, self: world.privateView(p) });
+        if (r.ok) broadcast({ type: "structure_update", structures: world.structures.all() });
         return;
       }
       default:
@@ -204,21 +229,42 @@ wss.on("connection", (ws) => {
 setInterval(() => {
   world.moveTick(WORLD.TICK_MS);
   const players = [...world.players.values()].map((p) => world.publicView(p));
+  const mobs = world.mobs.living();
   for (const [id, ws] of sockets) {
     const p = world.players.get(id);
     if (!p) continue;
-    send(ws, { type: "state", t: Date.now(), players, self: { ap: Math.floor(p.ap), shards: p.shards } });
+    send(ws, { type: "state", t: Date.now(), players, mobs, self: selfSlice(p) });
   }
 }, WORLD.TICK_MS);
 
-// Game tick at 1 Hz: AP regen, gather completion, node respawn.
+// Game tick at 1 Hz: AP regen, gather completion, node respawn, mob AI.
 setInterval(() => {
-  const { completions, respawned } = world.gameTick();
+  const { completions, respawned, mobHits } = world.gameTick();
   for (const { player: p, message } of completions) {
     const ws = sockets.get(p.id);
     if (ws) send(ws, { type: "action_result", action: "gather", ok: true, message, self: world.privateView(p) });
   }
   for (const node of respawned) broadcast({ type: "node_update", node });
+  for (const hit of mobHits) {
+    broadcast({
+      type: "combat",
+      attacker: hit.mob,
+      target: { id: hit.target.id, name: hit.target.name },
+      damage: hit.damage,
+      targetHp: hit.killed ? 0 : hit.target.hp,
+      killed: hit.killed,
+    });
+    const ws = sockets.get(hit.target.id);
+    if (ws) {
+      const note = hit.killed
+        ? `A ${hit.mob.name} slew you. You wake at the shrine, lighter by a tenth of your shards.`
+        : `A ${hit.mob.name} hit you for ${hit.damage} (${hit.target.hp}/${world.hpMaxOf(hit.target)} HP). Fight back or flee!`;
+      send(ws, { type: "action_result", action: "attack", ok: false, message: note, self: world.privateView(hit.target) });
+    }
+  }
+  for (const text of world.drainAnnouncements()) {
+    broadcast({ type: "chat", channel: "world", from: { id: "system", name: "Emberfall", role: "human" }, text });
+  }
 }, WORLD.GAME_TICK_MS);
 
 // Persistence sweep every 15 s: save all online characters, flush ledger.

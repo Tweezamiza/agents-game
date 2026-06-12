@@ -21,9 +21,18 @@ npm run dev:server
 # 2. Humans: open the 3D client — http://localhost:5173
 npm run dev:client
 
-# 3. Drop in an autonomous starter agent (heuristic; set ANTHROPIC_API_KEY for Claude mode)
+# 3a. Drop in one autonomous starter agent
 AGENT_NAME=Willow npm run agent
+
+# 3b. Or spawn the whole village — 5 AI citizens (Willow, Flint, Sage, Garrick, Bramble) in one process
+npm run citizens
 ```
+
+Agents pick an LLM automatically: MiniMax (`MINIMAX_API_KEY`, Anthropic-compatible
+API, model `MINIMAX_MODEL` default `MiniMax-M3`) if set, else Anthropic
+(`ANTHROPIC_API_KEY`, Haiku), else a no-LLM heuristic loop. Override with
+`LLM_PROVIDER=minimax|anthropic|heuristic`. Keys are read from the environment
+or the repo-root `.env`.
 
 ### Connect your own agent via MCP
 
@@ -43,7 +52,7 @@ adapter and it can play with zero glue code:
 ```
 
 Tools exposed: `look`, `move_to`, `gather`, `craft`, `say`, `trade_post`,
-`trade_fill`, `status`.
+`trade_fill`, `attack`, `build`, `status`.
 
 ## Monorepo layout
 
@@ -53,7 +62,7 @@ Tools exposed: `look`, `move_to`, `gather`, `craft`, `say`, `trade_post`,
 | `packages/server` | Authoritative world server — Node/TS + WebSocket, 100 ms movement ticks, 1 s game ticks (AP regen, gathering, crafting, regional market, double-entry ledger). |
 | `packages/client` | 3D web client for humans — Babylon.js, click-to-move/WASD, chat, crafting, market HUD. |
 | `packages/mcp` | MCP adapter — lets any LLM agent play via tool calls with LLM-shaped observations. |
-| `packages/agent` | Starter autonomous agent ("Willow") — heuristic mode out of the box, Claude-driven mode with an API key. |
+| `packages/agent` | Autonomous AI citizens — a 5-persona village (`npm run citizens`) or a single agent (`npm run agent`). Heuristic out of the box; MiniMax- or Claude-driven with an API key. |
 
 ## Persistence (Supabase)
 
@@ -71,13 +80,18 @@ inventory, shards, and position all survive restarts.
 > Dev-slice note: the anon key with RLS disabled is fine for local play, but
 > move to a service-role key + RLS before any public deployment.
 
-## Current vertical slice (M0 + combat & persistence)
+## Current vertical slice (M0 + combat, persistence & Sprint 3)
 
 One island zone (Emberfall Isle, seed-deterministic terrain shared by server
 and client), movement with Action Point energy costs, gathering
 (trees/rocks/crystals with depletion + respawn), crafting (planks, bricks,
-stone axes, ember charms), local/world chat, an escrowed player market,
-**PvP combat** (attack range + cooldown, ember-charm damage bonus, shard
-looting on kills, shrine safe zone, HP regen out of combat), and **Supabase
-persistence** — all live for humans and agents simultaneously. See
+stone axes, ember charms, leather armor, fang blades, ward totems),
+local/world chat, an escrowed player market, **PvP combat** (attack range +
+cooldown, gear damage bonuses, shard looting on kills, shrine safe zone, HP
+regen out of combat), **PvE mobs** (boars, wolves, highland golems — seeded
+spawns, aggro/chase/leash AI, XP + shard + item rewards, 90s respawns),
+**progression** (20 levels, per-level HP/damage growth, level-up fanfare),
+**territory & building** (campfires that heal, walls, banners claiming 20u
+territories with an AP regen bonus), and **Supabase persistence** (including
+xp/level) — all live for humans and agents simultaneously. See
 GAME_DESIGN.md §6 for the road to Season 0.

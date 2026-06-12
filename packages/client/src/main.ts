@@ -20,6 +20,8 @@ let myId = "";
 let apMax: number = WORLD.AP_MAX;
 let joined = false;
 let selfPos: Vec2 = { x: WORLD.SIZE / 2, z: WORLD.SIZE / 2 };
+/** Last known own level, for the golden level-up flash. */
+let lastLevel = 1;
 /** Set when a node is clicked; auto-gather fires once on arrival. */
 let pendingGather: string | null = null;
 const nodeMap = new Map<string, ResourceNode>();
@@ -30,6 +32,7 @@ const hud = new Hud({
   onFill: (orderId) => net.send({ type: "trade_fill", orderId }),
   onPost: (side, item, qty, price) =>
     net.send({ type: "trade_post", side, item, qty, price }),
+  onBuild: (structure) => net.send({ type: "build", structure }),
 });
 
 const world = new World3D(canvas, {
@@ -46,6 +49,10 @@ const world = new World3D(canvas, {
   onPlayer: (playerId) => {
     if (!joined) return;
     net.send({ type: "attack", targetId: playerId });
+  },
+  onMob: (mobId) => {
+    if (!joined) return;
+    net.send({ type: "attack", targetId: mobId });
   },
 });
 
@@ -73,16 +80,22 @@ function handleMsg(msg: ServerMsg): void {
       hud.setInventory(msg.self.inventory);
       hud.setKD(msg.self.kills, msg.self.deaths);
       hud.setSafeZone(msg.self.inSafeZone);
+      hud.setXp(msg.self.level, msg.self.xp, msg.self.xpNext);
+      lastLevel = msg.self.level;
       for (const node of msg.nodes) nodeMap.set(node.id, node);
-      world.buildWorld(msg.seed, msg.nodes, myId);
+      world.buildWorld(msg.seed, msg.nodes, myId, msg.mobs, msg.structures);
       selfPos = msg.self.pos;
       window.setInterval(() => net.send({ type: "observe" }), OBSERVE_INTERVAL_MS);
       return;
     }
     case "state": {
       world.updatePlayers(msg.players);
+      world.updateMobs(msg.mobs);
       hud.setAp(msg.self.ap, apMax);
       hud.setShards(msg.self.shards);
+      hud.setXp(msg.self.level, msg.self.xp, msg.self.xpNext);
+      if (msg.self.level > lastLevel) hud.levelFlash(msg.self.level);
+      lastLevel = msg.self.level;
       const me = msg.players.find((p) => p.id === myId);
       if (me) {
         selfPos = me.pos;
@@ -112,6 +125,7 @@ function handleMsg(msg: ServerMsg): void {
         hud.setInventory(msg.self.inventory);
         hud.setKD(msg.self.kills, msg.self.deaths);
         hud.setSafeZone(msg.self.inSafeZone);
+        hud.setXp(msg.self.level, msg.self.xp, msg.self.xpNext);
       }
       return;
     }
@@ -121,6 +135,9 @@ function handleMsg(msg: ServerMsg): void {
       return;
     case "market_update":
       hud.setMarket(msg.orders);
+      return;
+    case "structure_update":
+      world.setStructures(msg.structures);
       return;
     case "observation":
       hud.setInventory(msg.self.inventory);
@@ -159,6 +176,7 @@ window.addEventListener("keydown", (ev) => {
   if (isTyping()) return;
   const k = ev.key.toLowerCase();
   if (k === "w" || k === "a" || k === "s" || k === "d") heldKeys.add(k);
+  if (k === "b") hud.toggleSidePanel(); // build menu lives in the side panel
 });
 window.addEventListener("keyup", (ev) => heldKeys.delete(ev.key.toLowerCase()));
 window.addEventListener("blur", () => heldKeys.clear());

@@ -8,7 +8,7 @@
  * `observe` on demand and receive LLM-shaped observations).
  */
 
-export const PROTOCOL_VERSION = "0.2.0";
+export const PROTOCOL_VERSION = "0.3.0";
 
 // ---------------------------------------------------------------------------
 // World constants
@@ -41,6 +41,7 @@ export const AP_COST = {
   MARKET_ORDER: 1,
   SAY: 0,
   ATTACK: 8,
+  BUILD: 5,
 } as const;
 
 export const COMBAT = {
@@ -60,6 +61,12 @@ export const COMBAT = {
   SAFE_ZONE_RADIUS: 14,
   /** Fraction of the victim's shards looted by the killer. */
   LOOT_SHARD_FRACTION: 0.25,
+  /** Fraction of shards lost when a mob kills you (gentler than PvP). */
+  MOB_DEATH_SHARD_FRACTION: 0.1,
+  /** leather_armor in inventory reduces ALL incoming damage by this fraction. */
+  ARMOR_REDUCTION: 0.25,
+  /** fang_blade in inventory adds this to attack damage (stacks with charm). */
+  BLADE_BONUS: 6,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -73,7 +80,13 @@ export type ItemId =
   | "plank"
   | "brick"
   | "stone_axe"
-  | "ember_charm";
+  | "ember_charm"
+  | "hide"
+  | "fang"
+  | "golem_core"
+  | "leather_armor"
+  | "fang_blade"
+  | "ward_totem";
 
 export type ResourceKind = "tree" | "rock" | "crystal";
 
@@ -95,7 +108,103 @@ export const RECIPES: Recipe[] = [
   { id: "brick", output: "brick", outputQty: 1, inputs: { stone: 2 } },
   { id: "stone_axe", output: "stone_axe", outputQty: 1, inputs: { wood: 1, stone: 2 } },
   { id: "ember_charm", output: "ember_charm", outputQty: 1, inputs: { ember_crystal: 1, plank: 2 } },
+  { id: "leather_armor", output: "leather_armor", outputQty: 1, inputs: { hide: 3 } },
+  { id: "fang_blade", output: "fang_blade", outputQty: 1, inputs: { fang: 2, plank: 1 } },
+  { id: "ward_totem", output: "ward_totem", outputQty: 1, inputs: { golem_core: 1, brick: 2 } },
 ];
+
+// ---------------------------------------------------------------------------
+// Mobs — server-authoritative PvE creatures, spawned from the world seed.
+// ---------------------------------------------------------------------------
+
+export type MobKind = "boar" | "wolf" | "golem";
+
+export interface MobStats {
+  /** Display name used in combat events and observations. */
+  name: string;
+  level: number;
+  hpMax: number;
+  damageMin: number;
+  damageMax: number;
+  /** World units per game tick — all mobs are slower than players. */
+  moveSpeed: number;
+  attackRange: number;
+  /** Aggressive kinds attack players within this radius unprovoked. */
+  aggroRange: number;
+  aggressive: boolean;
+  /** Rewards granted to the killer. */
+  xp: number;
+  shards: number;
+  drop: ItemId;
+  dropChance: number;
+}
+
+export const MOBS: Record<MobKind, MobStats> = {
+  boar: { name: "Boar", level: 2, hpMax: 40, damageMin: 4, damageMax: 7, moveSpeed: 2.2, attackRange: 1.8, aggroRange: 8, aggressive: false, xp: 18, shards: 4, drop: "hide", dropChance: 0.8 },
+  wolf: { name: "Wolf", level: 4, hpMax: 55, damageMin: 7, damageMax: 12, moveSpeed: 3.2, attackRange: 2, aggroRange: 10, aggressive: true, xp: 30, shards: 8, drop: "fang", dropChance: 0.7 },
+  golem: { name: "Highland Golem", level: 8, hpMax: 140, damageMin: 14, damageMax: 22, moveSpeed: 1.3, attackRange: 2.2, aggroRange: 9, aggressive: true, xp: 75, shards: 20, drop: "golem_core", dropChance: 0.45 },
+};
+
+export interface MobPublic {
+  id: string;
+  kind: MobKind;
+  pos: Vec2;
+  hp: number;
+  hpMax: number;
+  level: number;
+}
+
+// ---------------------------------------------------------------------------
+// Progression — XP, levels, and the curve between them.
+// ---------------------------------------------------------------------------
+
+export const PROGRESSION = {
+  LEVEL_CAP: 20,
+  /** hpMax = COMBAT.HP_MAX + HP_PER_LEVEL * (level - 1). */
+  HP_PER_LEVEL: 4,
+  /** Flat attack damage added per level above 1. */
+  DAMAGE_PER_LEVEL: 1,
+  XP_GATHER: 2,
+  XP_CRAFT: 3,
+  XP_PVP_KILL: 40,
+} as const;
+
+/** XP required to advance from level n to n + 1. */
+export function xpForLevel(n: number): number {
+  return Math.round(50 * Math.pow(n, 1.5));
+}
+
+// ---------------------------------------------------------------------------
+// Structures + territory — player-built, in-memory this sprint.
+// ---------------------------------------------------------------------------
+
+export type StructureKind = "campfire" | "wall" | "banner";
+
+export interface Structure {
+  id: string;
+  kind: StructureKind;
+  ownerId: string;
+  ownerName: string;
+  pos: Vec2;
+}
+
+export const STRUCTURES: Record<StructureKind, { name: string; cost: Partial<Record<ItemId, number>> }> = {
+  campfire: { name: "Campfire", cost: { wood: 2, stone: 1 } },
+  wall: { name: "Wall", cost: { brick: 3 } },
+  banner: { name: "Banner", cost: { ward_totem: 1, plank: 2 } },
+};
+
+export const TERRITORY = {
+  /** A banner claims a circular territory of this radius for its owner. */
+  BANNER_RADIUS: 20,
+  /** Extra AP regenerated per game tick while inside your own territory. */
+  AP_REGEN_BONUS: 2,
+  /** Campfires heal players within this radius by HEAL_HP per game tick. */
+  CAMPFIRE_HEAL_RADIUS: 6,
+  CAMPFIRE_HEAL_HP: 1,
+  /** Max 1 campfire per player within this radius (anti-spam). */
+  CAMPFIRE_MIN_SPACING: 30,
+} as const;
 
 // ---------------------------------------------------------------------------
 // Entities
@@ -119,6 +228,7 @@ export interface PlayerPublic {
   busy: boolean;
   hp: number;
   hpMax: number;
+  level: number;
 }
 
 export interface PlayerPrivate extends PlayerPublic {
@@ -128,6 +238,10 @@ export interface PlayerPrivate extends PlayerPublic {
   inventory: Partial<Record<ItemId, number>>;
   kills: number;
   deaths: number;
+  /** XP progress within the current level. */
+  xp: number;
+  /** XP needed to reach the next level (0 at the cap). */
+  xpNext: number;
   /** True while inside the central no-PvP shrine zone. */
   inSafeZone: boolean;
 }
@@ -208,7 +322,14 @@ export interface ObserveMsg {
 
 export interface AttackMsg {
   type: "attack";
+  /** Player id ("p-...") or mob id ("m-..."). */
   targetId: string;
+}
+
+export interface BuildMsg {
+  type: "build";
+  /** Built at the player's current position. */
+  structure: StructureKind;
 }
 
 export type ClientMsg =
@@ -221,7 +342,8 @@ export type ClientMsg =
   | TradePostMsg
   | TradeFillMsg
   | ObserveMsg
-  | AttackMsg;
+  | AttackMsg
+  | BuildMsg;
 
 // ---------------------------------------------------------------------------
 // Server → Client messages
@@ -236,6 +358,8 @@ export interface WelcomeMsg {
   seed: number;
   self: PlayerPrivate;
   nodes: ResourceNode[];
+  mobs: MobPublic[];
+  structures: Structure[];
 }
 
 /** 10 Hz frame for smooth rendering. Positions only; full data via observe. */
@@ -243,7 +367,9 @@ export interface StateMsg {
   type: "state";
   t: number;
   players: PlayerPublic[];
-  self: { ap: number; shards: number };
+  /** Live mobs only — dead ones vanish until they respawn. */
+  mobs: MobPublic[];
+  self: { ap: number; shards: number; level: number; xp: number; xpNext: number };
 }
 
 export interface ChatEvent {
@@ -271,6 +397,12 @@ export interface NodeUpdateMsg {
 export interface MarketUpdateMsg {
   type: "market_update";
   orders: MarketOrder[];
+}
+
+/** Full structure list, broadcast whenever something is built (or a banner moves). */
+export interface StructureUpdateMsg {
+  type: "structure_update";
+  structures: Structure[];
 }
 
 export interface ErrorMsg {
@@ -301,6 +433,8 @@ export interface ObservationMsg {
   self: PlayerPrivate;
   nearbyPlayers: PlayerPublic[];
   nearbyNodes: ResourceNode[];
+  nearbyMobs: MobPublic[];
+  structures: Structure[];
   market: MarketOrder[];
   recipes: Recipe[];
 }
@@ -312,6 +446,7 @@ export type ServerMsg =
   | ActionResultMsg
   | NodeUpdateMsg
   | MarketUpdateMsg
+  | StructureUpdateMsg
   | ErrorMsg
   | ObservationMsg
   | CombatEvent;

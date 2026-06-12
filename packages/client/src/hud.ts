@@ -3,6 +3,8 @@ import {
   type MarketOrder,
   RECIPES,
   type Role,
+  type StructureKind,
+  STRUCTURES,
 } from "@agentworld/protocol";
 
 export const ITEMS: ItemId[] = [
@@ -13,6 +15,12 @@ export const ITEMS: ItemId[] = [
   "brick",
   "stone_axe",
   "ember_charm",
+  "hide",
+  "fang",
+  "golem_core",
+  "leather_armor",
+  "fang_blade",
+  "ward_totem",
 ];
 
 export interface HudCallbacks {
@@ -20,6 +28,7 @@ export interface HudCallbacks {
   onCraft: (recipeId: string) => void;
   onFill: (orderId: string) => void;
   onPost: (side: "buy" | "sell", item: ItemId, qty: number, price: number) => void;
+  onBuild: (structure: StructureKind) => void;
 }
 
 function el<T extends HTMLElement>(id: string): T {
@@ -36,6 +45,14 @@ export class Hud {
   private readonly hpText = el<HTMLDivElement>("hp-text");
   private readonly apFill = el<HTMLDivElement>("ap-fill");
   private readonly apText = el<HTMLDivElement>("ap-text");
+  private readonly xpFill = el<HTMLDivElement>("xp-fill");
+  private readonly xpText = el<HTMLDivElement>("xp-text");
+  private readonly levelBadge = el<HTMLDivElement>("level-badge");
+  private readonly levelFlashEl = el<HTMLDivElement>("level-flash");
+  private levelFlashTimer = 0;
+  private readonly buildList = el<HTMLDivElement>("build-list");
+  private readonly buildButtons = new Map<StructureKind, HTMLButtonElement>();
+  private lastInventory: Partial<Record<ItemId, number>> = {};
   private readonly shardsEl = el<HTMLDivElement>("shards");
   private readonly kdEl = el<HTMLDivElement>("kd");
   private readonly sanctuaryEl = el<HTMLDivElement>("sanctuary");
@@ -91,6 +108,24 @@ export class Hud {
       btn.addEventListener("click", () => this.cb.onCraft(recipe.id));
       row.append(label, btn);
       this.craftList.appendChild(row);
+    }
+
+    // Build buttons: one per structure, greyed when unaffordable.
+    for (const [kind, spec] of Object.entries(STRUCTURES) as [StructureKind, (typeof STRUCTURES)[StructureKind]][]) {
+      const row = document.createElement("div");
+      row.className = "craft-row";
+      const costs = Object.entries(spec.cost)
+        .map(([item, qty]) => `${qty} ${item.replace(/_/g, " ")}`)
+        .join(" + ");
+      const label = document.createElement("span");
+      label.innerHTML = `<b>${spec.name}</b> <span class="inputs">← ${costs}</span>`;
+      const btn = document.createElement("button");
+      btn.className = "action";
+      btn.textContent = "Build";
+      btn.addEventListener("click", () => this.cb.onBuild(kind));
+      this.buildButtons.set(kind, btn);
+      row.append(label, btn);
+      this.buildList.appendChild(row);
     }
 
     // Item options for the post-order form.
@@ -156,6 +191,30 @@ export class Hud {
     this.kdEl.textContent = `⚔ Kills: ${kills} · Deaths: ${deaths}`;
   }
 
+  /** XP bar + level badge. xpNext of 0 means the level cap is reached. */
+  setXp(level: number, xp: number, xpNext: number): void {
+    const frac = xpNext > 0 ? Math.max(0, Math.min(1, xp / xpNext)) : 1;
+    this.xpFill.style.width = `${frac * 100}%`;
+    this.xpText.textContent = xpNext > 0 ? `${xp} / ${xpNext} XP` : "MAX";
+    this.levelBadge.textContent = `${level}`;
+  }
+
+  /** Golden flash banner on level-up. */
+  levelFlash(level: number): void {
+    this.levelFlashEl.textContent = `✦ Level ${level} ✦`;
+    this.levelFlashEl.classList.add("active");
+    window.clearTimeout(this.levelFlashTimer);
+    this.levelFlashTimer = window.setTimeout(
+      () => this.levelFlashEl.classList.remove("active"),
+      2400,
+    );
+  }
+
+  /** B-key toggle for the side panel (inventory/craft/build/market). */
+  toggleSidePanel(): void {
+    this.sidePanel.classList.toggle("collapsed");
+  }
+
   setSafeZone(inSafeZone: boolean): void {
     this.sanctuaryEl.style.display = inSafeZone ? "block" : "none";
   }
@@ -175,6 +234,8 @@ export class Hud {
   }
 
   setInventory(inv: Partial<Record<ItemId, number>>): void {
+    this.lastInventory = inv;
+    this.refreshBuildButtons();
     this.invList.replaceChildren();
     const entries = Object.entries(inv).filter(([, qty]) => (qty ?? 0) > 0);
     if (entries.length === 0) {
@@ -194,6 +255,16 @@ export class Hud {
       count.textContent = `×${qty}`;
       row.append(name, count);
       this.invList.appendChild(row);
+    }
+  }
+
+  /** Grey out build buttons the satchel can't afford. */
+  private refreshBuildButtons(): void {
+    for (const [kind, btn] of this.buildButtons) {
+      const affordable = Object.entries(STRUCTURES[kind].cost).every(
+        ([item, qty]) => (this.lastInventory[item as ItemId] ?? 0) >= qty,
+      );
+      btn.disabled = !affordable;
     }
   }
 
