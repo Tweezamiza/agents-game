@@ -16,6 +16,7 @@ import {
   Mesh,
   MeshBuilder,
   PointerEventTypes,
+  PointLight,
   Scene,
   ShadowGenerator,
   StandardMaterial,
@@ -35,6 +36,7 @@ import {
   WORLD,
   terrainHeight,
 } from "@agentworld/protocol";
+import { addFlameOrb, addMoonRays, applyDuskLighting, buildDuskSky, tuneNightPipeline } from "./atmosphere";
 import { MobLayer } from "./mobs3d";
 import { StructureLayer } from "./structures3d";
 
@@ -194,11 +196,7 @@ export class World3D {
     this.engine = new Engine(canvas, true, { stencil: true });
     this.scene = new Scene(this.engine);
     (window as unknown as Record<string, unknown>).__scene = this.scene;
-    this.scene.clearColor = new Color4(0.66, 0.79, 0.87, 1);
-    // Gentle distance haze, warmed toward the golden horizon of the skybox.
-    this.scene.fogMode = Scene.FOGMODE_EXP2;
-    this.scene.fogDensity = 0.0021;
-    this.scene.fogColor = new Color3(0.78, 0.82, 0.85);
+    // Clear color, fog, and scene lights come from the dusk rig below.
 
     const half = WORLD.SIZE / 2;
     this.camera = new ArcRotateCamera(
@@ -219,67 +217,27 @@ export class World3D {
     this.camera.minZ = 0.5;
     this.camera.maxZ = 1200;
 
-    // Warm afternoon sun + slightly golden sky fill ("ember light").
-    const hemi = new HemisphericLight("hemi", new Vector3(0.1, 1, 0.05), this.scene);
-    hemi.intensity = 0.57;
-    hemi.diffuse = new Color3(0.94, 0.9, 0.82);
-    hemi.groundColor = new Color3(0.5, 0.42, 0.3);
-    const sun = new DirectionalLight("sun", new Vector3(-0.45, -0.8, 0.35), this.scene);
-    sun.intensity = 1.35;
-    sun.diffuse = new Color3(1.0, 0.94, 0.82);
-    sun.specular = new Color3(0.3, 0.28, 0.24);
-    sun.position = new Vector3(half + 80, 120, half - 70);
+    const rig = applyDuskLighting(this.scene);
+    rig.moon.position = new Vector3(half + 80, 120, half - 70);
 
-    this.shadows = new ShadowGenerator(2048, sun);
+    this.shadows = new ShadowGenerator(2048, rig.moon);
     this.shadows.usePercentageCloserFiltering = true;
     this.shadows.bias = 0.002;
     this.shadows.normalBias = 0.03;
-    this.shadows.darkness = 0.35;
+    this.shadows.darkness = 0.55;
 
-    // Skybox + image-based lighting so the glTF PBR materials read correctly.
+    // Dim IBL so glTF PBR materials keep definition without reading "sunny".
     const sky = new CubeTexture(`${ASSETS}/sky/TropicalSunnyDay`, this.scene);
     this.scene.environmentTexture = sky;
-    this.scene.environmentIntensity = 0.9;
-    const skybox = MeshBuilder.CreateBox("skybox", { size: 1000 }, this.scene);
-    const skyMat = new StandardMaterial("matSky", this.scene);
-    skyMat.backFaceCulling = false;
-    skyMat.reflectionTexture = sky.clone();
-    skyMat.reflectionTexture.coordinatesMode = Texture.SKYBOX_MODE;
-    skyMat.diffuseColor = Color3.Black();
-    skyMat.specularColor = Color3.Black();
-    skyMat.disableLighting = true;
-    skybox.material = skyMat;
-    skybox.infiniteDistance = true;
-    skybox.applyFog = false;
-    skybox.isPickable = false;
+    this.scene.environmentIntensity = 0.32;
 
-    // Subtle bloom (makes the shrine ember and crystals glow) + FXAA.
+    // Star dome + moon, with volumetric shafts hung off the moon disc.
+    const moonDisc = buildDuskSky(this.scene, new Vector3(half, 0, half));
+    if (ATMOSPHERE_GRADE) addMoonRays(this.scene, this.camera, moonDisc);
+
     const pipeline = new DefaultRenderingPipeline("rp", false, this.scene, [this.camera]);
     pipeline.fxaaEnabled = true;
-    pipeline.bloomEnabled = true;
-    pipeline.bloomThreshold = 0.8;
-    pipeline.bloomWeight = 0.3;
-    pipeline.bloomKernel = 48;
-    pipeline.bloomScale = 0.5;
-
-    // Atmosphere grade: a soft warm vignette + touch of contrast so the world
-    // reads "ember-lit chronicle" instead of raw render. Guarded — older
-    // @babylonjs/core builds without image processing simply skip it.
-    if (ATMOSPHERE_GRADE) {
-      try {
-        pipeline.imageProcessingEnabled = true;
-        const ip = pipeline.imageProcessing;
-        if (ip) {
-          ip.vignetteEnabled = true;
-          ip.vignetteWeight = 1.4;
-          ip.vignetteColor = new Color4(0.1, 0.05, 0.02, 0);
-          ip.exposure = 1.04;
-          ip.contrast = 1.05;
-        }
-      } catch {
-        // Image processing unavailable — keep the default pipeline output.
-      }
-    }
+    tuneNightPipeline(pipeline);
 
     this.matRockBase = this.solidMat("matRockBase", new Color3(0.45, 0.44, 0.47));
     this.matCrystal = this.solidMat("matCrystal", new Color3(0.05, 0.3, 0.36));
@@ -447,7 +405,8 @@ export class World3D {
     vd.applyToMesh(mesh);
 
     const mat = new StandardMaterial("matTerrain", this.scene);
-    mat.diffuseColor = new Color3(1, 1, 1);
+    // Cool night tint over the daylight vertex colors — moonlit grass, not lime.
+    mat.diffuseColor = new Color3(0.58, 0.64, 0.8);
     mat.specularColor = new Color3(0, 0, 0);
     mesh.material = mat;
     mesh.isPickable = true;
@@ -520,7 +479,7 @@ export class World3D {
     ring.isPickable = false;
 
     const mat = new StandardMaterial("matSafeZone", this.scene);
-    mat.emissiveColor = new Color3(0.95, 0.78, 0.4);
+    mat.emissiveColor = new Color3(0.45, 0.36, 0.18);
     mat.diffuseColor = new Color3(0, 0, 0);
     mat.specularColor = new Color3(0, 0, 0);
     mat.disableLighting = true;
@@ -599,11 +558,22 @@ export class World3D {
     ember.isPickable = false;
     this.emberMat = emberMat;
 
-    // Torches around the shrine.
+    // The village's warm anchor: one real point light pooling ember light
+    // over the shrine plaza against the cool moonlit night.
+    const emberLight = new PointLight("shrineEmberLight", ember.position.clone(), this.scene);
+    emberLight.diffuse = new Color3(1.0, 0.6, 0.24);
+    emberLight.specular = new Color3(0.6, 0.35, 0.12);
+    emberLight.intensity = 2.4;
+    emberLight.range = 15;
+
+    // Torches around the shrine — flame orbs bloom through the glow layer.
     for (let i = 0; i < 4; i++) {
       const p = at(45 + i * 90, 3.6);
       const torch = this.spawnProp(TORCH_URL, `shrineTorch${i}`);
-      if (torch) this.placeAt(torch, p.x, p.z, p.facing + Math.PI, 1.5);
+      if (torch) {
+        this.placeAt(torch, p.x, p.z, p.facing + Math.PI, 1.5);
+        addFlameOrb(this.scene, p.x, this.groundY(p.x, p.z) + 2.5, p.z);
+      }
     }
 
     // --- Buildings ----------------------------------------------------------
@@ -631,7 +601,10 @@ export class World3D {
     for (let i = 0; i < 6; i++) {
       const p = at(i * 60 + 30, 13.4);
       const torch = this.spawnProp(TORCH_URL, `ringTorch${i}`);
-      if (torch) this.placeAt(torch, p.x, p.z, p.facing, 1.6);
+      if (torch) {
+        this.placeAt(torch, p.x, p.z, p.facing, 1.6);
+        addFlameOrb(this.scene, p.x, this.groundY(p.x, p.z) + 2.7, p.z, 1.1);
+      }
     }
     const fenceR = 15.2;
     for (let arc = 0; arc < 4; arc++) {

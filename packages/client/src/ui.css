@@ -84,10 +84,16 @@ html, body {
   padding: 12px 14px;
 }
 
-/* Pre-join: panels wait behind the title plate; entrance plays once on join. */
+/* Pre-join: panels wait behind the title plate; entrance plays once on join.
+   Visibility must NEVER depend on the animation finishing — an interrupted
+   animation (tab restore, dev reload) used to strand panels half-faded. */
 body.pre-join #status-panel,
 body.pre-join #chat-panel,
-body.pre-join #side-wrap { opacity: 0; }
+body.pre-join #side-wrap { opacity: 0; pointer-events: none; }
+
+body.entered #status-panel,
+body.entered #side-wrap,
+body.entered #chat-panel { opacity: 1; }
 
 body.entered #status-panel { animation: panel-in-up 0.55s var(--ease-out) 0ms backwards; }
 body.entered #side-wrap   { animation: panel-in-right 0.55s var(--ease-out) 80ms backwards; }
