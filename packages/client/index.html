@@ -40,23 +40,42 @@
       border-bottom: 1px solid var(--panel-border); padding-bottom: 4px;
     }
 
-    /* ---- top-left: AP + shards ---- */
+    /* ---- top-left: HP + AP + shards ---- */
     #status-panel { top: 14px; left: 14px; min-width: 230px; }
-    #ap-bar {
+    #hp-bar, #ap-bar {
       position: relative; height: 18px; border: 1px solid var(--panel-border);
       border-radius: 4px; background: #1a1426; overflow: hidden;
+    }
+    #hp-bar { margin-bottom: 6px; }
+    #hp-fill {
+      height: 100%; width: 0%;
+      background: hsl(120, 70%, 42%);
+      transition: width 0.25s ease, background 0.25s ease;
     }
     #ap-fill {
       height: 100%; width: 0%;
       background: linear-gradient(90deg, #2d6a4f, #74c69d);
       transition: width 0.25s ease;
     }
-    #ap-text {
+    #hp-text, #ap-text {
       position: absolute; inset: 0; text-align: center; font-size: 12px;
       line-height: 18px; color: #f0ead8; text-shadow: 0 1px 2px #000;
     }
     #shards { margin-top: 6px; font-size: 14px; color: var(--gold); }
+    #kd { margin-top: 4px; font-size: 12px; color: var(--ink); }
+    #sanctuary {
+      display: none; margin-top: 4px; font-size: 12px; color: var(--accent);
+      font-style: italic; text-shadow: 0 0 8px rgba(126, 200, 227, 0.5);
+    }
     #conn-status { margin-top: 4px; font-size: 11px; color: var(--muted); }
+
+    /* ---- death vignette ---- */
+    #death-vignette {
+      position: absolute; inset: 0; z-index: 50; pointer-events: none;
+      box-shadow: inset 0 0 180px 60px rgba(160, 10, 10, 0.85);
+      opacity: 0; transition: opacity 0.4s ease;
+    }
+    #death-vignette.active { opacity: 1; transition: opacity 0.08s ease; }
 
     /* ---- bottom-left: chat ---- */
     #chat-panel {
@@ -73,6 +92,7 @@
     #chat-log .who.agent { color: #e8a04c; }
     #chat-log .sys { color: var(--muted); font-style: italic; }
     #chat-log .err { color: var(--danger); }
+    #chat-log .combat { color: #e08f5a; }
     #chat-row { display: flex; gap: 6px; margin-top: 8px; }
     #chat-channel {
       background: #221a35; color: var(--gold); border: 1px solid var(--panel-border);
@@ -163,11 +183,16 @@
   <canvas id="render-canvas"></canvas>
 
   <div id="status-panel" class="hud panel">
-    <h3>Action Points</h3>
+    <h3>Vitality</h3>
+    <div id="hp-bar"><div id="hp-fill"></div><div id="hp-text">— / —</div></div>
     <div id="ap-bar"><div id="ap-fill"></div><div id="ap-text">— / —</div></div>
     <div id="shards">◆ Shards: 0</div>
+    <div id="kd">⚔ Kills: 0 · Deaths: 0</div>
+    <div id="sanctuary">☩ Sanctuary — no harm may pass</div>
     <div id="conn-status">connecting…</div>
   </div>
+
+  <div id="death-vignette"></div>
 
   <div id="chat-panel" class="hud panel">
     <h3>Chronicle</h3>

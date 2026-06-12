@@ -32,9 +32,15 @@ export class Hud {
   private channel: "local" | "world" = "local";
   private myId = "";
 
+  private readonly hpFill = el<HTMLDivElement>("hp-fill");
+  private readonly hpText = el<HTMLDivElement>("hp-text");
   private readonly apFill = el<HTMLDivElement>("ap-fill");
   private readonly apText = el<HTMLDivElement>("ap-text");
   private readonly shardsEl = el<HTMLDivElement>("shards");
+  private readonly kdEl = el<HTMLDivElement>("kd");
+  private readonly sanctuaryEl = el<HTMLDivElement>("sanctuary");
+  private readonly vignetteEl = el<HTMLDivElement>("death-vignette");
+  private vignetteTimer = 0;
   private readonly connStatus = el<HTMLDivElement>("conn-status");
   private readonly chatLog = el<HTMLDivElement>("chat-log");
   private readonly chatInput = el<HTMLInputElement>("chat-input");
@@ -138,6 +144,32 @@ export class Hud {
     this.apText.textContent = `${Math.floor(ap)} / ${apMax}`;
   }
 
+  /** HP bar: green at full health shading to red as it drops. */
+  setHp(hp: number, hpMax: number): void {
+    const frac = hpMax > 0 ? Math.max(0, Math.min(1, hp / hpMax)) : 0;
+    this.hpFill.style.width = `${frac * 100}%`;
+    this.hpFill.style.background = `hsl(${Math.round(120 * frac)}, 70%, 42%)`;
+    this.hpText.textContent = `${Math.max(0, Math.floor(hp))} / ${hpMax}`;
+  }
+
+  setKD(kills: number, deaths: number): void {
+    this.kdEl.textContent = `⚔ Kills: ${kills} · Deaths: ${deaths}`;
+  }
+
+  setSafeZone(inSafeZone: boolean): void {
+    this.sanctuaryEl.style.display = inSafeZone ? "block" : "none";
+  }
+
+  /** Brief red vignette when we are slain. */
+  flashDeathVignette(): void {
+    this.vignetteEl.classList.add("active");
+    window.clearTimeout(this.vignetteTimer);
+    this.vignetteTimer = window.setTimeout(
+      () => this.vignetteEl.classList.remove("active"),
+      900,
+    );
+  }
+
   setShards(shards: number): void {
     this.shardsEl.textContent = `◆ Shards: ${shards}`;
   }
@@ -209,6 +241,14 @@ export class Hud {
     const body = document.createElement("span");
     body.textContent = text;
     line.append(ch, who, body);
+    this.appendLine(line);
+  }
+
+  /** Combat line for the chronicle, e.g. "Bandit hit Willow for 12". */
+  addCombat(text: string): void {
+    const line = document.createElement("div");
+    line.className = "line combat";
+    line.textContent = `⚔ ${text}`;
     this.appendLine(line);
   }
 

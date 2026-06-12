@@ -19,6 +19,8 @@ import { WebSocket } from "ws";
 import {
   ActionResultMsg,
   ClientMsg,
+  COMBAT,
+  CombatEvent,
   ItemId,
   MarketOrder,
   ObservationMsg,
@@ -48,7 +50,7 @@ interface Waiter {
 
 interface BufferEntry {
   t: number;
-  kind: "chat" | "action_result";
+  kind: "chat" | "action_result" | "combat";
   text: string;
   read: boolean;
 }
@@ -215,6 +217,10 @@ class GameClient {
         for (const n of msg.nearbyNodes) this.nodes.set(n.id, n);
         break;
       }
+      case "combat": {
+        this.pushBuffer("combat", this.describeCombat(msg));
+        break;
+      }
       case "node_update":
         this.nodes.set(msg.node.id, msg.node);
         break;
@@ -225,6 +231,17 @@ class GameClient {
         log("server error:", msg.message);
         break;
     }
+  }
+
+  /** Render a combat broadcast as one line, e.g. "Bandit hit you for 12 (62/100 HP)". */
+  private describeCombat(msg: CombatEvent): string {
+    const attacker = msg.attacker.id === this.playerId ? "You" : msg.attacker.name;
+    const target = msg.target.id === this.playerId ? "you" : msg.target.name;
+    if (msg.killed) {
+      const loot = msg.loot ? `, looting ${msg.loot} shards` : "";
+      return `${attacker} slew ${target}${loot}!`;
+    }
+    return `${attacker} hit ${target} for ${msg.damage} (${msg.targetHp}/${COMBAT.HP_MAX} HP)`;
   }
 
   private waitFor(
@@ -308,7 +325,9 @@ function fmtSelf(self: PlayerPrivate): string {
       .join(", ") || "empty";
   return (
     `position: (${self.pos.x.toFixed(1)}, ${self.pos.z.toFixed(1)}) | ` +
+    `HP: ${self.hp}/${self.hpMax}${self.inSafeZone ? " (in safe zone)" : ""} | ` +
     `AP: ${self.ap}/${self.apMax} | shards: ${self.shards} | ` +
+    `kills/deaths: ${self.kills}/${self.deaths} | ` +
     `busy: ${self.busy} | inventory: ${inv}`
   );
 }
@@ -339,6 +358,7 @@ server.registerTool(
   async () => {
     const obs = await client.observe();
     const chat = client.takeUnread("chat");
+    const combat = client.takeUnread("combat");
     const structured = {
       self: obs.self,
       nearbyNodes: obs.nearbyNodes,
@@ -348,6 +368,8 @@ server.registerTool(
     };
     const parts = [
       obs.summary,
+      fmtSelf(obs.self),
+      combat.length ? `Recent combat:\n${combat.join("\n")}` : "No recent combat.",
       chat.length ? `Unread chat:\n${chat.join("\n")}` : "No unread chat.",
       `Structured state:\n${JSON.stringify(structured, null, 2)}`,
     ];
@@ -447,6 +469,19 @@ server.registerTool(
   },
   async ({ order_id, qty }) => {
     const result = await client.action({ type: "trade_fill", orderId: order_id, qty });
+    return text(fmtActionResult(result));
+  },
+);
+
+server.registerTool(
+  "attack",
+  {
+    description:
+      "Attack another player by id (get ids from look's nearbyPlayers). You must be within 2.5 units of the target — walk into range first. Costs 8 AP, with a ~2 second cooldown between attacks. PvP is disabled inside the shrine safe zone (radius 14 around the island's central spawn shrine) — attacks there are refused. Killing a player loots 25% of the victim's shards for you; beware: if YOU are killed, you lose 25% of YOUR shards and respawn at the shrine. Returns the attack outcome (damage dealt, target HP, any loot).",
+    inputSchema: { target_id: z.string() },
+  },
+  async ({ target_id }) => {
+    const result = await client.action({ type: "attack", targetId: target_id });
     return text(fmtActionResult(result));
   },
 );

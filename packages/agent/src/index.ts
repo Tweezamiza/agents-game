@@ -12,12 +12,15 @@
  */
 import { WebSocket } from "ws";
 import {
-  ActionResultMsg,
+  AP_COST,
   ClientMsg,
+  COMBAT,
+  CombatEvent,
   ItemId,
   ObservationMsg,
   ResourceKind,
   ResourceNode,
+  SAFE_ZONE_CENTER,
   ServerMsg,
   Vec2,
   WORLD,
@@ -30,6 +33,13 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const LOOP_MS = 3_000;
 const CHAT_LOG_SIZE = 30;
 const CHARM_PRICE = 25;
+const COMBAT_LOG_SIZE = 20;
+/** Flee when HP drops below this. */
+const FLEE_HP = 50;
+/** Resume the normal loop only at/above this HP... */
+const RESUME_HP = 90;
+/** ...and after this long without any combat event involving us. */
+const CALM_MS = 15_000;
 
 function log(...args: unknown[]) {
   console.log(new Date().toISOString().slice(11, 19), `[${AGENT_NAME}]`, ...args);
@@ -54,9 +64,15 @@ class Bot {
   playerId = "";
   nodes = new Map<string, ResourceNode>();
   chatLog: string[] = [];
+  combatLog: string[] = [];
   lastActionResult = "(none yet)";
   /** Set when the last action failed for AP/busy reasons — wait a tick. */
   cooldown = false;
+
+  // Survival state: Willow never starts fights, but she runs from them.
+  fleeing = false;
+  /** Timestamp of the last combat event/warning that targeted us. */
+  lastThreatAt = 0;
 
   // Heuristic state.
   loopCount = 0;
@@ -169,6 +185,19 @@ class Bot {
         if (!msg.ok && /not enough ap|already gathering|busy gathering/i.test(msg.message)) {
           this.cooldown = true;
         }
+        // Incoming-hit warning: the server sends the victim an attack
+        // action_result with ok:false ("X hit you for ..." / "You were slain ...").
+        if (msg.action === "attack" && !msg.ok && /hit you for|you were slain/i.test(msg.message)) {
+          this.onThreat(msg.message);
+        }
+        break;
+      }
+      case "combat": {
+        const line = this.describeCombat(msg);
+        this.combatLog.push(line);
+        if (this.combatLog.length > COMBAT_LOG_SIZE) this.combatLog.shift();
+        log("combat:", line);
+        if (msg.target.id === this.playerId) this.onThreat(line);
         break;
       }
       case "node_update":
@@ -181,6 +210,27 @@ class Bot {
         log("server error:", msg.message);
         break;
       // 10 Hz state frames are ignored; we observe on our own cadence.
+    }
+  }
+
+  private describeCombat(msg: CombatEvent): string {
+    const attacker = msg.attacker.id === this.playerId ? "You" : msg.attacker.name;
+    const target = msg.target.id === this.playerId ? "you" : msg.target.name;
+    if (msg.killed) {
+      return `${attacker} slew ${target}${msg.loot ? `, looting ${msg.loot} shards` : ""}!`;
+    }
+    return `${attacker} hit ${target} for ${msg.damage} (${msg.targetHp}/${COMBAT.HP_MAX} HP)`;
+  }
+
+  /** An attack on us was detected. In heuristic mode, flee immediately. */
+  private onThreat(detail: string) {
+    this.lastThreatAt = Date.now();
+    if (ANTHROPIC_API_KEY) return; // Claude mode sees this via combatLog and decides itself.
+    if (!this.fleeing) {
+      this.fleeing = true;
+      log(`SURVIVAL: under attack (${detail}) — fleeing to the shrine!`);
+      this.say("Peace! I'm just a gatherer!");
+      this.send({ type: "move", target: SAFE_ZONE_CENTER });
     }
   }
 
@@ -238,6 +288,29 @@ class Bot {
   heuristicStep(obs: ObservationMsg) {
     this.loopCount++;
     const self = obs.self;
+
+    // -- Survival first: flee to the shrine when attacked or badly hurt. -----
+    const calm = Date.now() - this.lastThreatAt >= CALM_MS;
+    if (!this.fleeing && (self.hp < FLEE_HP || !calm)) {
+      this.fleeing = true;
+      log(`SURVIVAL: hp ${self.hp}/${self.hpMax}${calm ? "" : " after recent combat"} — fleeing to the shrine!`);
+      this.say("Peace! I'm just a gatherer!");
+    }
+    if (this.fleeing) {
+      if (self.hp >= RESUME_HP && calm) {
+        this.fleeing = false;
+        log(`SURVIVAL: recovered (${self.hp}/${self.hpMax} HP, no combat for ${CALM_MS / 1000}s) — resuming normal routine`);
+      } else {
+        if (self.inSafeZone) {
+          log(`decision: sheltering at the shrine (${self.hp}/${self.hpMax} HP) until things calm down`);
+        } else {
+          log(`decision: fleeing toward the shrine at (${SAFE_ZONE_CENTER.x}, ${SAFE_ZONE_CENTER.z}) — ${self.hp}/${self.hpMax} HP`);
+          this.send({ type: "move", target: SAFE_ZONE_CENTER });
+        }
+        return;
+      }
+    }
+
     const inv = self.inventory;
     const wood = inv.wood ?? 0;
     const planks = inv.plank ?? 0;
@@ -336,7 +409,16 @@ class Bot {
 // ---------------------------------------------------------------------------
 
 interface ClaudeDecision {
-  action: "move_to" | "gather" | "craft" | "say" | "trade_post" | "trade_fill" | "wait";
+  action:
+    | "move_to"
+    | "gather"
+    | "craft"
+    | "say"
+    | "trade_post"
+    | "trade_fill"
+    | "attack"
+    | "flee"
+    | "wait";
   reason?: string;
   x?: number;
   z?: number;
@@ -349,6 +431,7 @@ interface ClaudeDecision {
   item?: string;
   price?: number;
   order_id?: string;
+  target_id?: string;
 }
 
 async function claudeStep(bot: Bot, obs: ObservationMsg): Promise<void> {
@@ -358,16 +441,24 @@ async function claudeStep(bot: Bot, obs: ObservationMsg): Promise<void> {
     `Be friendly and in-character. Work toward crafting ember_charms (2 wood -> 1 plank; ` +
     `1 ember_crystal + 2 planks -> 1 ember_charm) and selling them for shards. ` +
     `Gathering requires being within 3 units of a node; walking takes real time (~4 units/sec). ` +
+    `Combat exists: attack has range ${COMBAT.ATTACK_RANGE}, costs ${AP_COST.ATTACK} AP, ~2s cooldown, ` +
+    `and is impossible inside the shrine safe zone (radius ${COMBAT.SAFE_ZONE_RADIUS} around ` +
+    `(${SAFE_ZONE_CENTER.x}, ${SAFE_ZONE_CENTER.z})). Killing loots 25% of the victim's shards — ` +
+    `and dying costs YOU 25% of yours. flee walks you to the shrine safe zone; prefer fleeing when hurt. ` +
     `Respond with exactly one JSON object and nothing else: ` +
-    `{"action": "move_to|gather|craft|say|trade_post|trade_fill|wait", ...params, "reason": "..."}. ` +
+    `{"action": "move_to|gather|craft|say|trade_post|trade_fill|attack|flee|wait", ...params, "reason": "..."}. ` +
     `Params by action — move_to: {x, z}; gather: {node_id}; craft: {recipe_id, qty?}; ` +
-    `say: {text, channel?}; trade_post: {side, item, qty, price}; trade_fill: {order_id, qty?}; wait: {}.`;
+    `say: {text, channel?}; trade_post: {side, item, qty, price}; trade_fill: {order_id, qty?}; ` +
+    `attack: {target_id}; flee: {}; wait: {}.`;
 
   const user = [
     `Observation: ${obs.summary}`,
+    `Vitals: HP ${obs.self.hp}/${obs.self.hpMax}, ${obs.self.inSafeZone ? "INSIDE" : "outside"} the shrine safe zone, K/D ${obs.self.kills}/${obs.self.deaths}.`,
+    `Recent combat events:\n${bot.combatLog.slice(-8).join("\n") || "(none)"}`,
     `Recent chat:\n${bot.chatLog.slice(-10).join("\n") || "(none)"}`,
     `Last action result: ${bot.lastActionResult}`,
     `Nearby nodes (JSON): ${JSON.stringify(obs.nearbyNodes.slice(0, 8))}`,
+    `Nearby players (JSON): ${JSON.stringify(obs.nearbyPlayers.slice(0, 8))}`,
     `Market (JSON): ${JSON.stringify(obs.market.slice(0, 10))}`,
   ].join("\n\n");
 
@@ -419,6 +510,12 @@ async function claudeStep(bot: Bot, obs: ObservationMsg): Promise<void> {
       break;
     case "trade_fill":
       bot.send({ type: "trade_fill", orderId: String(d.order_id), qty: d.qty });
+      break;
+    case "attack":
+      bot.send({ type: "attack", targetId: String(d.target_id) });
+      break;
+    case "flee":
+      bot.send({ type: "move", target: SAFE_ZONE_CENTER });
       break;
     case "wait":
       break;

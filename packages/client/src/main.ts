@@ -43,6 +43,10 @@ const world = new World3D(canvas, {
     pendingGather = node.id;
     net.send({ type: "move", target: { x: node.pos.x, z: node.pos.z } });
   },
+  onPlayer: (playerId) => {
+    if (!joined) return;
+    net.send({ type: "attack", targetId: playerId });
+  },
 });
 
 const net = new Net(
@@ -64,8 +68,11 @@ function handleMsg(msg: ServerMsg): void {
       hud.setMyId(myId);
       hud.setStatus(`connected — ${msg.self.name} on Emberfall Isle`);
       hud.setAp(msg.self.ap, apMax);
+      hud.setHp(msg.self.hp, msg.self.hpMax);
       hud.setShards(msg.self.shards);
       hud.setInventory(msg.self.inventory);
+      hud.setKD(msg.self.kills, msg.self.deaths);
+      hud.setSafeZone(msg.self.inSafeZone);
       for (const node of msg.nodes) nodeMap.set(node.id, node);
       world.buildWorld(msg.seed, msg.nodes, myId);
       selfPos = msg.self.pos;
@@ -77,7 +84,10 @@ function handleMsg(msg: ServerMsg): void {
       hud.setAp(msg.self.ap, apMax);
       hud.setShards(msg.self.shards);
       const me = msg.players.find((p) => p.id === myId);
-      if (me) selfPos = me.pos;
+      if (me) {
+        selfPos = me.pos;
+        hud.setHp(me.hp, me.hpMax);
+      }
       if (pendingGather) {
         const node = nodeMap.get(pendingGather);
         if (!node || node.remaining <= 0) {
@@ -97,8 +107,11 @@ function handleMsg(msg: ServerMsg): void {
       if (msg.self) {
         apMax = msg.self.apMax;
         hud.setAp(msg.self.ap, apMax);
+        hud.setHp(msg.self.hp, msg.self.hpMax);
         hud.setShards(msg.self.shards);
         hud.setInventory(msg.self.inventory);
+        hud.setKD(msg.self.kills, msg.self.deaths);
+        hud.setSafeZone(msg.self.inSafeZone);
       }
       return;
     }
@@ -112,7 +125,18 @@ function handleMsg(msg: ServerMsg): void {
     case "observation":
       hud.setInventory(msg.self.inventory);
       hud.setMarket(msg.market);
+      hud.setKD(msg.self.kills, msg.self.deaths);
+      hud.setSafeZone(msg.self.inSafeZone);
       return;
+    case "combat": {
+      world.showHit(msg.target.id, msg.damage, msg.killed);
+      const text = msg.killed
+        ? `${msg.attacker.name} slew ${msg.target.name}${msg.loot ? ` (+${msg.loot} shards)` : ""}`
+        : `${msg.attacker.name} hit ${msg.target.name} for ${msg.damage}`;
+      hud.addCombat(text);
+      if (msg.killed && msg.target.id === myId) hud.flashDeathVignette();
+      return;
+    }
     case "error":
       hud.addError(msg.message);
       return;
