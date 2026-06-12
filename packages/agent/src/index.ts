@@ -3,13 +3,14 @@
  *
  * Speaks the WS protocol directly (no MCP). Two modes:
  *   - Heuristic (default, no API key): a simple gather → craft → sell loop.
- *   - Claude (if ANTHROPIC_API_KEY is set): each tick, the observation is sent
+ *   - LLM (if MINIMAX_API_KEY or ANTHROPIC_API_KEY is set): each tick, the observation is sent
  *     to the Anthropic Messages API and the returned JSON action is executed.
  *     Falls back to the heuristic step if the model output cannot be parsed.
  *
  * Env: GAME_URL (default ws://localhost:8080/ws), AGENT_NAME (default "Willow"),
- *      ANTHROPIC_API_KEY (optional — enables Claude mode).
+ *      MINIMAX_API_KEY / ANTHROPIC_API_KEY (optional — enables LLM mode).
  */
+import { activeProvider, chat } from "./llm.js";
 import { WebSocket } from "ws";
 import {
   AP_COST,
@@ -29,7 +30,7 @@ import {
 
 const GAME_URL = process.env.GAME_URL ?? "ws://localhost:8080/ws";
 const AGENT_NAME = process.env.AGENT_NAME ?? "Willow";
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const LLM = activeProvider();
 const LOOP_MS = 3_000;
 const CHAT_LOG_SIZE = 30;
 const CHARM_PRICE = 25;
@@ -225,7 +226,7 @@ class Bot {
   /** An attack on us was detected. In heuristic mode, flee immediately. */
   private onThreat(detail: string) {
     this.lastThreatAt = Date.now();
-    if (ANTHROPIC_API_KEY) return; // Claude mode sees this via combatLog and decides itself.
+    if (LLM) return; // LLM mode sees this via combatLog and decides itself.
     if (!this.fleeing) {
       this.fleeing = true;
       log(`SURVIVAL: under attack (${detail}) — fleeing to the shrine!`);
@@ -408,7 +409,7 @@ class Bot {
 // Claude mode — one Messages API call per tick, plain fetch, JSON-action reply.
 // ---------------------------------------------------------------------------
 
-interface ClaudeDecision {
+interface LlmDecision {
   action:
     | "move_to"
     | "gather"
@@ -434,7 +435,7 @@ interface ClaudeDecision {
   target_id?: string;
 }
 
-async function claudeStep(bot: Bot, obs: ObservationMsg): Promise<void> {
+async function llmStep(bot: Bot, obs: ObservationMsg): Promise<void> {
   const system =
     `You are ${AGENT_NAME}, a citizen of Emberfall Isle — a small island where humans and AI agents ` +
     `live side by side, gathering resources, crafting, chatting, and trading on an open market. ` +
@@ -462,30 +463,12 @@ async function claudeStep(bot: Bot, obs: ObservationMsg): Promise<void> {
     `Market (JSON): ${JSON.stringify(obs.market.slice(0, 10))}`,
   ].join("\n\n");
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": ANTHROPIC_API_KEY!,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 300,
-      system,
-      messages: [{ role: "user", content: user }],
-    }),
-  });
-  if (!res.ok) {
-    throw new Error(`Anthropic API ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  }
-  const data = (await res.json()) as { content?: { type: string; text?: string }[] };
-  const textOut = data.content?.find((b) => b.type === "text")?.text ?? "";
+  const textOut = await chat(system, user, 300);
   const jsonMatch = textOut.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error(`no JSON object in model output: ${textOut.slice(0, 120)}`);
-  const d = JSON.parse(jsonMatch[0]) as ClaudeDecision;
+  const d = JSON.parse(jsonMatch[0]) as LlmDecision;
 
-  log(`claude decision: ${d.action}${d.reason ? ` — ${d.reason}` : ""}`);
+  log(`${LLM!.name} decision: ${d.action}${d.reason ? ` — ${d.reason}` : ""}`);
   switch (d.action) {
     case "move_to":
       bot.send({ type: "move", target: { x: Number(d.x), z: Number(d.z) } });
@@ -529,18 +512,18 @@ async function claudeStep(bot: Bot, obs: ObservationMsg): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function main() {
-  log(`starting — mode: ${ANTHROPIC_API_KEY ? "claude (haiku)" : "heuristic"}, server: ${GAME_URL}`);
+  log(`starting — mode: ${LLM ? `llm (${LLM.name}:${LLM.model})` : "heuristic"}, server: ${GAME_URL}`);
   const bot = new Bot();
   await bot.ensureConnected();
 
   for (;;) {
     try {
       const obs = await bot.observe();
-      if (ANTHROPIC_API_KEY) {
+      if (LLM) {
         try {
-          await claudeStep(bot, obs);
+          await llmStep(bot, obs);
         } catch (e) {
-          log("claude step failed:", (e as Error).message, "— falling back to heuristic");
+          log("llm step failed:", (e as Error).message, "— falling back to heuristic");
           bot.heuristicStep(obs);
         }
       } else {
