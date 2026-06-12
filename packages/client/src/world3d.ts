@@ -11,6 +11,7 @@ import {
   DirectionalLight,
   DynamicTexture,
   Engine,
+  HDRCubeTexture,
   HemisphericLight,
   LoadAssetContainerAsync,
   Mesh,
@@ -226,10 +227,11 @@ export class World3D {
     this.shadows.normalBias = 0.03;
     this.shadows.darkness = 0.55;
 
-    // Dim IBL so glTF PBR materials keep definition without reading "sunny".
-    const sky = new CubeTexture(`${ASSETS}/sky/TropicalSunnyDay`, this.scene);
+    // Night IBL from a real moonlit HDRI (Poly Haven, CC0) so PBR materials
+    // pick up cool ambient sky light instead of a daylight cubemap.
+    const sky = new HDRCubeTexture(`${ASSETS}/sky/satara_night_1k.hdr`, this.scene, 128, false, true, false, true);
     this.scene.environmentTexture = sky;
-    this.scene.environmentIntensity = 0.32;
+    this.scene.environmentIntensity = 0.55;
 
     // Star dome + moon, with volumetric shafts hung off the moon disc.
     const moonDisc = buildDuskSky(this.scene, new Vector3(half, 0, half));
@@ -301,6 +303,8 @@ export class World3D {
     urls.add(PILLAR_URL);
     urls.add(FENCE_URL);
     urls.add(CHEST_URL);
+    urls.add(SPHINX_URL);
+    urls.add(SIREN_URL);
 
     const loaded = new Map<string, AssetContainer>();
     await Promise.all(
@@ -358,6 +362,9 @@ export class World3D {
     void this.loadAssets().then(() => {
       this.buildCrystalTemplate();
       this.buildVillage();
+      // The Siren of the High Stones — a lone landmark on the boss highland.
+      const siren = this.spawnProp(SIREN_URL, "highlandSiren");
+      if (siren) this.placeAt(siren, 152, 130, Math.atan2(120 - 152, 120 - 130), 1.6);
       for (const node of this.pendingNodes) this.createNode(node);
       this.pendingNodes = [];
       const players = this.pendingPlayers;
@@ -595,6 +602,15 @@ export class World3D {
     if (chest) {
       const p = at(262, 7.6);
       this.placeAt(chest, p.x, p.z, p.facing, 0.8);
+    }
+
+    // Sphinx guardians flanking the east entrance — real museum scans give
+    // the shrine a weight no low-poly prop can.
+    for (const [name, angle] of [["sphinxL", 12], ["sphinxR", -12]] as const) {
+      const p = at(angle, 16.2);
+      const sphinx = this.spawnProp(SPHINX_URL, name);
+      // Face along the entrance path, out toward the wilds.
+      if (sphinx) this.placeAt(sphinx, p.x, p.z, p.facing + Math.PI, 1.15);
     }
 
     // --- Perimeter: torch ring + fence arcs with gaps at the entrances ------
@@ -1179,6 +1195,9 @@ const VILLAGE_PROPS: VillagePropSpec[] = [
 ];
 
 const TORCH_URL = `${ASSETS}/dungeon/torch_lit.glb`;
+/** Museum statue scans (Three D Scans, free for any use) — premium set dressing. */
+const SPHINX_URL = `${ASSETS}/statues/sphinx.glb`;
+const SIREN_URL = `${ASSETS}/statues/siren.glb`;
 const PILLAR_URL = `${ASSETS}/dungeon/pillar_decorated.glb`;
 const FENCE_URL = `${ASSETS}/dungeon/barrier.glb`;
 const CHEST_URL = `${ASSETS}/dungeon/chest_gold.glb`;
