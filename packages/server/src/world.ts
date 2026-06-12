@@ -99,21 +99,64 @@ export class World {
 
   private generateNodes() {
     const rng = mulberry32(this.seed);
-    const place = (kind: ResourceKind, count: number) => {
-      let placed = 0;
-      let guard = 0;
-      while (placed < count && guard++ < 5000) {
-        const x = rng() * WORLD.SIZE;
-        const z = rng() * WORLD.SIZE;
-        if (terrainHeight(x, z, this.seed) < 0.5) continue;
-        const id = `${kind}-${this.nextId++}`;
-        this.nodes.set(id, { id, kind, pos: { x, z }, remaining: NODE_CAPACITY[kind] });
-        placed++;
-      }
+    const h = (x: number, z: number) => terrainHeight(x, z, this.seed);
+    const clearOfVillage = (x: number, z: number) =>
+      distance({ x, z }, SAFE_ZONE_CENTER) > COMBAT.SAFE_ZONE_RADIUS + 6;
+
+    const add = (kind: ResourceKind, x: number, z: number) => {
+      const id = `${kind}-${this.nextId++}`;
+      this.nodes.set(id, { id, kind, pos: { x, z }, remaining: NODE_CAPACITY[kind] });
     };
-    place("tree", 40);
-    place("rock", 25);
-    place("crystal", 8);
+
+    // Forest groves: deterministic cluster centres on grassland, trees
+    // scattered around each so the island reads as woods, not confetti.
+    const groves: Vec2[] = [];
+    let guard = 0;
+    while (groves.length < 9 && guard++ < 8000) {
+      const x = rng() * WORLD.SIZE;
+      const z = rng() * WORLD.SIZE;
+      const y = h(x, z);
+      if (y < 1.2 || y > 6.5 || !clearOfVillage(x, z)) continue;
+      if (groves.some((g) => distance(g, { x, z }) < 34)) continue;
+      groves.push({ x, z });
+    }
+    let trees = 0;
+    guard = 0;
+    while (trees < 120 && guard++ < 20000) {
+      const g = groves[Math.floor(rng() * groves.length)];
+      const a = rng() * 2 * Math.PI;
+      const r = rng() * 16;
+      const x = g.x + Math.cos(a) * r;
+      const z = g.z + Math.sin(a) * r;
+      const y = h(x, z);
+      if (y < 0.8 || y > 7.5 || !clearOfVillage(x, z)) continue;
+      add("tree", x, z);
+      trees++;
+    }
+
+    // Rocks: up on the highland and exposed ridges.
+    let rocks = 0;
+    guard = 0;
+    while (rocks < 70 && guard++ < 30000) {
+      const x = rng() * WORLD.SIZE;
+      const z = rng() * WORLD.SIZE;
+      const y = h(x, z);
+      if (y < 5.5 || !clearOfVillage(x, z)) continue;
+      add("rock", x, z);
+      rocks++;
+    }
+
+    // Ember crystals: rare, in the low meadows near the coast and basin.
+    let crystals = 0;
+    guard = 0;
+    while (crystals < 24 && guard++ < 30000) {
+      const x = rng() * WORLD.SIZE;
+      const z = rng() * WORLD.SIZE;
+      const y = h(x, z);
+      if (y < 0.8 || y > 3.2 || !clearOfVillage(x, z)) continue;
+      add("crystal", x, z);
+      crystals++;
+    }
   }
 
   spawnPoint(): Vec2 {

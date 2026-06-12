@@ -16,7 +16,7 @@ export const PROTOCOL_VERSION = "0.2.0";
 
 export const WORLD = {
   /** Side length of the square island, in world units (XZ plane). */
-  SIZE: 96,
+  SIZE: 240,
   /** Movement/physics sub-tick, ms. State frames broadcast at this rate. */
   TICK_MS: 100,
   /** Game tick (AP regen, node respawn, gather/craft completion), ms. */
@@ -326,17 +326,44 @@ export const SAFE_ZONE_CENTER: Vec2 = { x: WORLD.SIZE / 2, z: WORLD.SIZE / 2 };
 
 export function terrainHeight(x: number, z: number, seed: number): number {
   const s = Math.sin(seed) * 43758.5453;
-  const h =
-    Math.sin(x * 0.06 + s) * Math.cos(z * 0.05 + s * 0.7) * 2.2 +
-    Math.sin(x * 0.013 + z * 0.017 + s * 1.3) * 4.0 +
-    Math.sin((x + z) * 0.11 + s * 2.1) * 0.6;
-  // Island falloff: edges sink below sea level (y = 0).
-  const half = WORLD.SIZE / 2;
-  const dx = (x - half) / half;
-  const dz = (z - half) / half;
+  const size = WORLD.SIZE;
+  const half = size / 2;
+
+  // Rolling hills: layered sines at several frequencies/orientations.
+  const rolling =
+    Math.sin(x * 0.043 + s) * Math.cos(z * 0.037 + s * 0.7) * 1.7 +
+    Math.sin(x * 0.011 + z * 0.014 + s * 1.3) * 3.0 +
+    Math.sin((x - z) * 0.019 + s * 2.7) * 1.5 +
+    Math.sin((x + z) * 0.087 + s * 2.1) * 0.4;
+
+  // Highland massif in the north-east quadrant (rocks live up here).
+  const hx = x - size * 0.7;
+  const hz = z - size * 0.66;
+  const highland = 10.5 * Math.exp(-(hx * hx + hz * hz) / (2 * 42 * 42));
+
+  // Gentle meadow basin to the south-west (berries/crystals).
+  const mx = x - size * 0.33;
+  const mz = z - size * 0.36;
+  const meadow = -1.4 * Math.exp(-(mx * mx + mz * mz) / (2 * 36 * 36));
+
+  // Flatten a plateau at the centre so the shrine village sits level:
+  // perfectly flat inside r=18, smooth-stepped back to wild terrain by r=40.
+  const cx = x - half;
+  const cz = z - half;
+  const cd = Math.sqrt(cx * cx + cz * cz);
+  const t = Math.min(1, Math.max(0, (cd - 18) / 22));
+  const wild = t * t * (3 - 2 * t);
+
+  let h = rolling + highland + meadow;
+  h = 2.4 * (1 - wild) + h * wild; // blend toward the village plateau
+
+  // Island falloff: a wide, soft rim so the coast reads as beaches before
+  // the terrain sinks below sea level (y = 0).
+  const dx = cx / half;
+  const dz = cz / half;
   const d = Math.sqrt(dx * dx + dz * dz);
-  const falloff = Math.max(0, 1 - Math.pow(d, 3) * 1.4);
-  return (h + 5) * falloff - 1.5;
+  const falloff = Math.max(0, 1 - Math.pow(d, 2.6) * 1.45);
+  return (h + 4.6) * falloff - 1.6;
 }
 
 export function distance(a: Vec2, b: Vec2): number {

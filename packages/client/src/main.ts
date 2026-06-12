@@ -129,6 +129,7 @@ function handleMsg(msg: ServerMsg): void {
       hud.setSafeZone(msg.self.inSafeZone);
       return;
     case "combat": {
+      world.showAttack(msg.attacker.id);
       world.showHit(msg.target.id, msg.damage, msg.killed);
       const text = msg.killed
         ? `${msg.attacker.name} slew ${msg.target.name}${msg.loot ? ` (+${msg.loot} shards)` : ""}`
