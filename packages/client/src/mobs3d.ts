@@ -17,6 +17,8 @@ const DEATH_MS = 1100;
 const SPAWN_POP_MS = 450;
 const HIT_FLASH_MS = 280;
 const SNAP_DISTANCE = 8;
+/** Name tags fade out beyond this camera distance (no haunted horizon bars). */
+const TAG_VIEW_RANGE = 55;
 
 /** Tag height above the ground per kind (golems are tall). */
 const TAG_HEIGHTS: Record<MobKind, number> = { boar: 1.7, wolf: 1.9, golem: 3.1, bonelord: 4.1 };
@@ -129,6 +131,9 @@ export class MobLayer {
 
       const flashing = now < mv.flashUntil;
       for (const m of mv.meshes) m.renderOverlay = flashing;
+
+      const cam = this.scene.activeCamera;
+      if (cam) mv.tag.isVisible = Vector3.Distance(cam.position, mv.root.position) < TAG_VIEW_RANGE;
     }
   }
 
@@ -215,6 +220,13 @@ export class MobLayer {
     for (const r of entries.rootNodes) {
       r.parent = node;
       if (r instanceof TransformNode) r.scaling.setAll(BOSS_SCALE);
+    }
+    // Ground the feet like createPlayer does — KayKit rigs don't sit at y=0.
+    node.computeWorldMatrix(true);
+    const bounds = node.getHierarchyBoundingVectors(true);
+    const lift = Number.isFinite(bounds.min.y) ? -bounds.min.y : 0;
+    for (const r of entries.rootNodes) {
+      if (r instanceof TransformNode) r.position.y += lift;
     }
     for (const g of entries.animationGroups) g.stop();
     const idle =
