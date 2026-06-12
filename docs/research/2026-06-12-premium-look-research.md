@@ -42,3 +42,23 @@ Single-source/unverified: Fab giveaway cadence; Rodin free-tier commercial right
 ## Full agent reports
 
 (Stored in the session transcript of 2026-06-12; ask Claude to re-export if needed.)
+
+---
+
+# Addendum (same day): The FREE creation pipeline — user was right, it exists
+
+## The bombshell: MetaHuman is free for ANY engine since June 2025
+
+Epic changed the MetaHuman license at State of Unreal (June 3, 2025): the "UE-Only" clause was **deleted** (https://www.unrealengine.com/en-US/eula-change-log/content, https://www.metahuman.com/license). MetaHumans — AAA film-grade rigged realistic humans — are now usable **commercially in any engine including Babylon.js**, free under $1M/yr revenue, no royalty (they count as "Non-Engine Products"). You can even sell them. Creation happens inside the free Unreal editor (5.6+/5.7, the old web app dies Nov 2026); export FBX/glTF → Blender → Babylon. Caveats: film-density meshes need LOD/optimization for web; wardrobe is modern (fantasy armor must be made/fitted); NEVER feed MetaHuman data into AI training (the one hard restriction).
+
+## The verified $0 pipelines
+
+**Humans/heroes (grade A):** MetaHuman (free UE editor) → FBX → Blender LOD pass → glTF → Babylon. Animations: Mixamo (still free 2026) + CMU mocap (2,500 clips, commercial OK).
+**Fallback without UE (grade C+):** MPFB2 or CharMorph in Blender — outputs CC0, fully open.
+**Monsters/bosses (grade B with polish):** concept image → **TRELLIS.2-4B** (Microsoft, MIT license incl. weights, PBR GLB output) → Blender retopo → **UniRig** (MIT, verified at LICENSE) auto-skeleton+skinning → retarget CC0 animations (Quaternius Universal Animation Library / KayKit / CMU) → glTF. Every link MIT/CC0. Note: TRELLIS.2 needs an NVIDIA GPU — use the free HuggingFace Space per-asset or rent a cloud GPU (~$1/session); Macs can't run it locally.
+**Environments (grade A- achievable):** Poly Haven (CC0: 767 textures, 972 HDRIs incl. 59 night skies, 456 models) + ambientCG (CC0, 2000+ PBR) + **Smithsonian Open Access** (~2,350 CC0 museum scans as glTF — real statues/reliefs for instant premium ruins) + Three D Scans statues + Gaea Community (1K heightmaps, commercial OK) + Tree It + Blender geo-node rock/tree generators + Material Maker 1.6 (MIT, procedural gothic trim sheets).
+**VFX (grade A-):** Babylon's Node Particle Editor + GPU particles + CC0 flipbooks (Unity Labs VFX sequences, CGHEVEN fire, Kenney particle pack). NOTE: three.quarks is three.js-only — skip; lygia shader lib is NOT free for commercial (Prosperity license) — avoid.
+**Audio:** Freesound CC0 + OpenGameArt dungeon ambience packs.
+
+## Confirmed traps (look free, aren't)
+DAZ outputs (per-asset Interactive License, fatal for extractable web assets) · Bandai Namco mocap (non-commercial) · Blockade Labs Skybox free tier (CC-BY-NC) · BlenderKit "Royalty-Free" tier (forbids extractable distribution = web games) · Truebones (unverifiable license) · Cascadeur free tier (no FBX export, non-commercial) · Hunyuan3D (license void in EU/UK/KR).
