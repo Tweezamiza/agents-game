@@ -1,4 +1,5 @@
 import {
+  type AnimationGroup,
   type AssetContainer,
   Color3,
   DynamicTexture,
@@ -20,11 +21,11 @@ const SNAP_DISTANCE = 8;
 /** Name tags fade out beyond this camera distance (no haunted horizon bars). */
 const TAG_VIEW_RANGE = 55;
 
-/** Tag height above the ground per kind (golems are tall). */
-const TAG_HEIGHTS: Record<MobKind, number> = { boar: 1.7, wolf: 1.9, golem: 3.1, bonelord: 4.1 };
+/** Tag height above the ground per kind (heavier undead stand taller). */
+const TAG_HEIGHTS: Record<MobKind, number> = { boar: 1.7, wolf: 2.0, golem: 2.9, bonelord: 3.6 };
 
-/** The Bonelord towers over the player characters (~1.8u tall). */
-const BOSS_SCALE = 1.8;
+/** Body scale per kind — the bestiary is now coherent KayKit undead. */
+const MOB_SCALE: Record<MobKind, number> = { boar: 0.85, wolf: 1.0, golem: 1.45, bonelord: 1.8 };
 
 interface MobVisual {
   root: TransformNode;
@@ -38,22 +39,29 @@ interface MobVisual {
   /** performance.now() until which the death fall/fade plays; then dispose. */
   dyingUntil: number;
   bornAt: number;
+  /** Walk/idle/death animation groups + the one currently playing. */
+  idle: AnimationGroup | null;
+  walk: AnimationGroup | null;
+  death: AnimationGroup | null;
+  current: AnimationGroup | null;
+  /** performance.now() until which the mob counts as moving (plays walk). */
+  movingUntil: number;
 }
 
 /**
- * Mob rendering: characterful primitive composites (no fitting KayKit animal
- * meshes ship with the downloaded packs), interpolated from 10 Hz frames.
+ * Mob rendering: every creature is a coherent KayKit skeleton model (the same
+ * art family as the player knight), scaled and named per kind, interpolated
+ * from 10 Hz frames. The undead bestiary matches the dark-fantasy isle.
  */
 export class MobLayer {
   private readonly visuals = new Map<string, MobVisual>();
-  private readonly templates = new Map<MobKind, TransformNode>();
 
   constructor(
     private readonly scene: Scene,
     private readonly shadows: ShadowGenerator | null,
     private readonly groundY: (x: number, z: number) => number,
-    /** Lazily resolves the boss character container (may still be loading). */
-    private readonly bossContainer: () => AssetContainer | null = () => null,
+    /** Resolves the loaded character container for a kind (may still load). */
+    private readonly containerFor: (kind: MobKind) => AssetContainer | null = () => null,
   ) {}
 
   has(id: string): boolean {
@@ -80,7 +88,12 @@ export class MobLayer {
       const y = this.groundY(m.pos.x, m.pos.z);
       const dx = m.pos.x - mv.target.x;
       const dz = m.pos.z - mv.target.z;
-      if (Math.hypot(dx, dz) > 0.05) mv.facingY = Math.atan2(dx, dz);
+      if (Math.hypot(dx, dz) > 0.05) {
+        mv.facingY = Math.atan2(dx, dz);
+        // Mobs step on the 1 s server tick and lerp across it; keep walking a
+        // touch past one tick so continuous movers never flicker back to idle.
+        mv.movingUntil = now + 1200;
+      }
       mv.target.set(m.pos.x, y, m.pos.z);
       if (m.hp !== mv.hp) {
         mv.hp = m.hp;
@@ -103,18 +116,23 @@ export class MobLayer {
   animate(now: number, lerpFactor: number): void {
     for (const [id, mv] of this.visuals) {
       if (mv.dyingUntil > 0) {
+        this.play(mv, mv.death, false);
         const t = 1 - (mv.dyingUntil - now) / DEATH_MS;
         if (t >= 1) {
           mv.root.dispose(false, true);
           this.visuals.delete(id);
           continue;
         }
-        mv.root.rotation.x = t * (Math.PI / 2) * 0.6;
+        // If the rig has no death clip, fall over; otherwise let it play.
+        if (!mv.death) mv.root.rotation.x = t * (Math.PI / 2) * 0.6;
         const fade = Math.max(0, 1 - Math.max(0, t - 0.35) / 0.65);
         for (const m of mv.meshes) m.visibility = fade;
         mv.tag.visibility = fade;
         continue;
       }
+
+      // Walk while the server is still advancing the mob; idle once it stops.
+      this.play(mv, now < mv.movingUntil ? mv.walk ?? mv.idle : mv.idle, true);
       const pop = Math.min(1, (now - mv.bornAt) / SPAWN_POP_MS);
       const scale = 0.4 + 0.6 * (1 - (1 - pop) * (1 - pop));
       mv.root.scaling.setAll(scale);
@@ -140,8 +158,9 @@ export class MobLayer {
   // -------------------------------------------------------------------------
 
   private create(m: MobPublic, now: number): MobVisual | null {
-    const clone = m.kind === "bonelord" ? this.createBoss(m) : this.createComposite(m);
-    if (!clone) return null;
+    const built = this.createSkeletonMob(m);
+    if (!built) return null; // container still loading — retried next frame
+    const clone = built.node;
     const meshes: Mesh[] = [];
     for (const mesh of clone.getChildMeshes()) {
       if (!(mesh instanceof Mesh)) continue;
@@ -175,6 +194,11 @@ export class MobLayer {
       flashUntil: 0,
       dyingUntil: 0,
       bornAt: now,
+      idle: built.idle,
+      walk: built.walk,
+      death: built.death,
+      current: built.idle,
+      movingUntil: 0,
     };
   }
 
@@ -198,157 +222,58 @@ export class MobLayer {
     tag.material = mat;
   }
 
-  /** Boars/wolves/golems clone from a shared primitive-composite template. */
-  private createComposite(m: MobPublic): TransformNode | null {
-    const clone = this.template(m.kind).clone(`mob:${m.id}`, null);
-    clone?.setEnabled(true);
-    return clone;
-  }
-
   /**
-   * The Bonelord is a real KayKit character (Skeleton Warrior) scaled to
-   * boss size with an ember glow, idling on its rig. Falls back to the golem
-   * composite while the container is still loading.
+   * Every mob is a KayKit skeleton model, scaled per kind, idling on its rig.
+   * Returns null while the container is still streaming (retried next frame).
+   * The Bonelord additionally carries an ember glow light.
    */
-  private createBoss(m: MobPublic): TransformNode | null {
-    const container = this.bossContainer();
-    if (!container) return this.createComposite({ ...m, kind: "golem" });
+  private createSkeletonMob(
+    m: MobPublic,
+  ): { node: TransformNode; idle: AnimationGroup | null; walk: AnimationGroup | null; death: AnimationGroup | null } | null {
+    const container = this.containerFor(m.kind);
+    if (!container) return null;
     const entries = container.instantiateModelsToScene((n) => `${m.id}:${n}`, false, {
       doNotInstantiate: true,
     });
     const node = new TransformNode(`mob:${m.id}`, this.scene);
+    const scale = MOB_SCALE[m.kind];
     for (const r of entries.rootNodes) {
       r.parent = node;
-      if (r instanceof TransformNode) r.scaling.setAll(BOSS_SCALE);
+      if (r instanceof TransformNode) r.scaling.setAll(scale);
     }
-    // Ground the feet like createPlayer does — KayKit rigs don't sit at y=0.
+    // Ground the feet — KayKit rigs don't sit at y=0.
     node.computeWorldMatrix(true);
     const bounds = node.getHierarchyBoundingVectors(true);
     const lift = Number.isFinite(bounds.min.y) ? -bounds.min.y : 0;
     for (const r of entries.rootNodes) {
       if (r instanceof TransformNode) r.position.y += lift;
     }
-    for (const g of entries.animationGroups) g.stop();
-    const idle =
-      entries.animationGroups.find((g) => g.name === "Idle" || g.name.endsWith(":Idle")) ?? null;
+    const groups = entries.animationGroups;
+    for (const g of groups) g.stop();
+    const find = (frag: string): AnimationGroup | null =>
+      groups.find((g) => g.name === frag || g.name.endsWith(`:${frag}`)) ??
+      groups.find((g) => g.name.includes(frag)) ??
+      null;
+    const idle = find("Idle") ?? groups[0] ?? null;
+    const walk = find("Walking_A") ?? find("Running_A") ?? find("Walk") ?? null;
+    const death = find("Death_A") ?? find("Death") ?? null;
     idle?.start(true);
-    const glow = new PointLight(`bossGlow:${m.id}`, new Vector3(0, 2.4, 0), this.scene);
-    glow.diffuse = new Color3(1.0, 0.45, 0.15);
-    glow.intensity = 0.85;
-    glow.range = 10;
-    glow.parent = node;
-    return node;
-  }
 
-  // -- Primitive composite templates, one per kind ----------------------------
-
-  private template(kind: MobKind): TransformNode {
-    let tpl = this.templates.get(kind);
-    if (tpl) return tpl;
-    tpl = new TransformNode(`mobTemplate:${kind}`, this.scene);
-    if (kind === "boar") this.buildBoar(tpl);
-    else if (kind === "wolf") this.buildWolf(tpl);
-    else this.buildGolem(tpl);
-    tpl.setEnabled(false);
-    this.templates.set(kind, tpl);
-    return tpl;
-  }
-
-  private mat(name: string, color: Color3, emissive?: Color3): StandardMaterial {
-    const m = new StandardMaterial(name, this.scene);
-    m.diffuseColor = color;
-    m.specularColor = new Color3(0.05, 0.05, 0.05);
-    if (emissive) {
-      m.emissiveColor = emissive;
-      m.disableLighting = true;
+    if (m.kind === "bonelord") {
+      const glow = new PointLight(`bossGlow:${m.id}`, new Vector3(0, 2.4, 0), this.scene);
+      glow.diffuse = new Color3(1.0, 0.45, 0.15);
+      glow.intensity = 0.85;
+      glow.range = 10;
+      glow.parent = node;
     }
-    return m;
+    return { node, idle, walk, death };
   }
 
-  private buildBoar(tpl: TransformNode): void {
-    const hide = this.mat("matBoarHide", new Color3(0.42, 0.29, 0.18));
-    const snoutMat = this.mat("matBoarSnout", new Color3(0.72, 0.5, 0.45));
-    const body = MeshBuilder.CreateSphere("boarBody", { diameter: 1 }, this.scene);
-    body.scaling.set(0.85, 0.75, 1.3);
-    body.position.y = 0.55;
-    body.material = hide;
-    const head = MeshBuilder.CreateSphere("boarHead", { diameter: 0.6 }, this.scene);
-    head.position.set(0, 0.62, 0.75);
-    head.material = hide;
-    const snout = MeshBuilder.CreateCylinder("boarSnout", { height: 0.22, diameter: 0.26 }, this.scene);
-    snout.rotation.x = Math.PI / 2;
-    snout.position.set(0, 0.55, 1.05);
-    snout.material = snoutMat;
-    const legs: Mesh[] = [];
-    for (const [lx, lz] of [[-0.28, 0.42], [0.28, 0.42], [-0.28, -0.42], [0.28, -0.42]]) {
-      const leg = MeshBuilder.CreateCylinder("boarLeg", { height: 0.4, diameter: 0.16 }, this.scene);
-      leg.position.set(lx, 0.2, lz);
-      leg.material = hide;
-      legs.push(leg);
-    }
-    for (const m of [body, head, snout, ...legs]) m.parent = tpl;
-  }
-
-  private buildWolf(tpl: TransformNode): void {
-    const fur = this.mat("matWolfFur", new Color3(0.45, 0.47, 0.52));
-    const dark = this.mat("matWolfDark", new Color3(0.28, 0.29, 0.33));
-    const body = MeshBuilder.CreateBox("wolfBody", { width: 0.55, height: 0.5, depth: 1.3 }, this.scene);
-    body.position.y = 0.62;
-    body.material = fur;
-    const head = MeshBuilder.CreateBox("wolfHead", { width: 0.42, height: 0.4, depth: 0.5 }, this.scene);
-    head.position.set(0, 0.85, 0.8);
-    head.material = fur;
-    const snout = MeshBuilder.CreateBox("wolfSnout", { width: 0.2, height: 0.18, depth: 0.32 }, this.scene);
-    snout.position.set(0, 0.76, 1.12);
-    snout.material = dark;
-    const earL = MeshBuilder.CreateCylinder("wolfEarL", { height: 0.26, diameterTop: 0, diameterBottom: 0.16, tessellation: 4 }, this.scene);
-    earL.position.set(-0.13, 1.12, 0.74);
-    earL.material = dark;
-    const earR = earL.clone("wolfEarR");
-    earR.position.x = 0.13;
-    const tail = MeshBuilder.CreateCylinder("wolfTail", { height: 0.55, diameterTop: 0.05, diameterBottom: 0.14, tessellation: 6 }, this.scene);
-    tail.rotation.x = -Math.PI / 3;
-    tail.position.set(0, 0.78, -0.78);
-    tail.material = dark;
-    const legs: Mesh[] = [];
-    for (const [lx, lz] of [[-0.18, 0.45], [0.18, 0.45], [-0.18, -0.45], [0.18, -0.45]]) {
-      const leg = MeshBuilder.CreateCylinder("wolfLeg", { height: 0.5, diameter: 0.13 }, this.scene);
-      leg.position.set(lx, 0.25, lz);
-      leg.material = dark;
-      legs.push(leg);
-    }
-    for (const m of [body, head, snout, earL, earR, tail, ...legs]) m.parent = tpl;
-  }
-
-  private buildGolem(tpl: TransformNode): void {
-    const stone = this.mat("matGolemStone", new Color3(0.42, 0.42, 0.46));
-    const moss = this.mat("matGolemMoss", new Color3(0.34, 0.4, 0.32));
-    const core = this.mat("matGolemCore", new Color3(0, 0, 0), new Color3(1.0, 0.55, 0.15));
-    const hips = MeshBuilder.CreateBox("golemHips", { width: 1.0, height: 0.6, depth: 0.7 }, this.scene);
-    hips.position.y = 0.85;
-    hips.material = moss;
-    const torso = MeshBuilder.CreateBox("golemTorso", { width: 1.4, height: 1.1, depth: 0.9 }, this.scene);
-    torso.position.y = 1.7;
-    torso.rotation.y = 0.12;
-    torso.material = stone;
-    const head = MeshBuilder.CreateBox("golemHead", { width: 0.55, height: 0.5, depth: 0.55 }, this.scene);
-    head.position.set(0, 2.5, 0.1);
-    head.material = moss;
-    const coreOrb = MeshBuilder.CreateSphere("golemCore", { diameter: 0.4 }, this.scene);
-    coreOrb.position.set(0, 1.75, 0.48);
-    coreOrb.material = core;
-    const armL = MeshBuilder.CreateBox("golemArmL", { width: 0.4, height: 1.3, depth: 0.45 }, this.scene);
-    armL.position.set(-0.95, 1.45, 0);
-    armL.rotation.z = 0.12;
-    armL.material = stone;
-    const armR = armL.clone("golemArmR");
-    armR.position.x = 0.95;
-    armR.rotation.z = -0.12;
-    const legL = MeshBuilder.CreateBox("golemLegL", { width: 0.42, height: 0.7, depth: 0.5 }, this.scene);
-    legL.position.set(-0.32, 0.32, 0);
-    legL.material = stone;
-    const legR = legL.clone("golemLegR");
-    legR.position.x = 0.32;
-    for (const m of [hips, torso, head, coreOrb, armL, armR, legL, legR]) m.parent = tpl;
+  /** Crossfade-free animation swap: stop the current group, start the next. */
+  private play(mv: MobVisual, next: AnimationGroup | null, loop: boolean): void {
+    if (!next || mv.current === next) return;
+    mv.current?.stop();
+    next.start(loop, 1);
+    mv.current = next;
   }
 }
