@@ -38,15 +38,15 @@ export function applyDuskLighting(scene: Scene): DuskRig {
   scene.fogDensity = 0.0034;
   scene.fogColor = new Color3(0.075, 0.085, 0.16);
 
-  // Cool moonlit fill; ground bounce stays faintly warm so torchlit areas read.
+  // Cool moonlit fill; raised so the hex-tile floor reads at gameplay zoom.
   const hemi = new HemisphericLight("hemi", new Vector3(0.1, 1, 0.05), scene);
-  hemi.intensity = 0.34;
-  hemi.diffuse = new Color3(0.52, 0.6, 0.85);
-  hemi.groundColor = new Color3(0.16, 0.13, 0.17);
+  hemi.intensity = 0.62;
+  hemi.diffuse = new Color3(0.62, 0.68, 0.92);
+  hemi.groundColor = new Color3(0.22, 0.18, 0.24);
 
   const moon = new DirectionalLight("moon", MOON_DIR.clone(), scene);
-  moon.intensity = 0.85;
-  moon.diffuse = new Color3(0.6, 0.7, 1.0);
+  moon.intensity = 1.05;
+  moon.diffuse = new Color3(0.68, 0.76, 1.0);
   moon.specular = new Color3(0.25, 0.3, 0.45);
 
   // Emissive surfaces (crystals, flames, cores, the shrine ember) bloom out.

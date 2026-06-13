@@ -214,6 +214,7 @@ export class World3D {
   private emberMat: StandardMaterial | null = null;
   private floaterSeq = 0;
   private shadows: ShadowGenerator | null = null;
+  private hexCt = 0;
 
   /** Loaded glTF containers, keyed by URL. Null until loadAssets resolves. */
   private containers: Map<string, AssetContainer> | null = null;
@@ -339,6 +340,7 @@ export class World3D {
     urls.add(SPHINX_URL);
     urls.add(SIREN_URL);
     for (const url of Object.values(HALLOWEEN)) urls.add(url);
+    for (const url of Object.values(HEX)) urls.add(url);
 
     const loaded = new Map<string, AssetContainer>();
     await Promise.all(
@@ -394,6 +396,7 @@ export class World3D {
     this.structureLayer.setAll(structures);
     this.pendingNodes = nodes.slice();
     void this.loadAssets().then(() => {
+      this.buildHexWorld();
       this.buildCrystalTemplate();
       this.buildVillage();
       this.dressDarkFantasy();
@@ -410,6 +413,84 @@ export class World3D {
 
   private groundY(x: number, z: number): number {
     return terrainHeight(x, z, this.seed);
+  }
+
+  /**
+   * The world floor is a KayKit Medieval Hexagon tile board. Each hex follows
+   * the existing heightmap (water / coast / grass by elevation), so the
+   * continuous movement and groundY stay unchanged — only the look is the
+   * built-in tile map instead of the bare procedural mesh. Highland and forest
+   * cells get mountain / tree decorations on top.
+   */
+  private buildHexWorld(): void {
+    const grass = this.hexInstancer(HEX.grass);
+    const water = this.hexInstancer(HEX.water);
+    const coast = this.hexInstancer(HEX.coast);
+    const dx = 2 * HEX_S; // pointy-top column spacing
+    const dz = 1.7320508 * HEX_S; // row spacing (3/2 * size)
+    let row = 0;
+    for (let cz = -dz; cz <= WORLD.SIZE + dz; cz += dz, row++) {
+      const rowOff = (row % 2) * HEX_S;
+      for (let cx = rowOff - dx; cx <= WORLD.SIZE + dx; cx += dx) {
+        const h = terrainHeight(cx, cz, this.seed);
+        if (h <= 0.6) {
+          water(cx, 0.35, cz);
+        } else if (h <= 1.5) {
+          coast(cx, h, cz);
+        } else {
+          grass(cx, h, cz);
+          const hsh = ((Math.floor(cx) * 73856093) ^ (Math.floor(cz) * 19349663)) >>> 0;
+          if (h > 5.5 && hsh % 3 === 0) this.placeHexDecor(HEX.mountain, cx, h, cz, (hsh % 6) * 1.04);
+          else if (h > 2.2 && h < 5 && hsh % 4 === 0) this.placeHexDecor(HEX.forest, cx, h, cz, (hsh % 6) * 1.04);
+        }
+      }
+    }
+    // The hex board IS the floor now — retire the bare procedural terrain and
+    // the old water plane (the hex tiles provide both).
+    if (this.terrain) this.terrain.isVisible = false;
+    const oldWater = this.scene.getMeshByName("water");
+    if (oldWater) oldWater.isVisible = false;
+  }
+
+  /** Returns a placer that GPU-instances one hex tile model at a position. */
+  private hexInstancer(url: string): (x: number, y: number, z: number) => void {
+    const c = this.containers?.get(url);
+    if (!c) return () => {};
+    const e = c.instantiateModelsToScene((n) => `hexsrc:${this.hexCt++}:${n}`, false, { doNotInstantiate: true });
+    const src: Mesh[] = [];
+    for (const r of e.rootNodes) {
+      for (const m of r.getChildMeshes()) {
+        if (!(m instanceof Mesh)) continue;
+        // Bake the glTF __root__ transform (a coordinate flip) into the geometry
+        // so instances inherit correct orientation — otherwise tiles render
+        // upside-down (dark underside up).
+        m.computeWorldMatrix(true);
+        m.bakeCurrentTransformIntoVertices();
+        m.isVisible = false;
+        src.push(m);
+      }
+    }
+    return (x: number, y: number, z: number): void => {
+      for (const s of src) {
+        const inst = s.createInstance(`hex:${this.hexCt++}`);
+        inst.scaling.setAll(HEX_S);
+        inst.position.set(x, y, z);
+        inst.isPickable = false;
+        inst.receiveShadows = true;
+        inst.freezeWorldMatrix();
+      }
+    };
+  }
+
+  private placeHexDecor(url: string, x: number, y: number, z: number, rotY: number): void {
+    const prop = this.spawnProp(url, `hexdec:${this.hexCt++}`);
+    if (!prop) return;
+    prop.scaling.setAll(HEX_S);
+    prop.rotation.y = rotY;
+    prop.position.set(x, y, z);
+    prop.computeWorldMatrix(true);
+    for (const m of prop.getChildMeshes()) m.freezeWorldMatrix();
+    prop.freezeWorldMatrix();
   }
 
   private buildTerrain(): void {
@@ -1301,6 +1382,19 @@ const HALLOWEEN = {
   lantern: `${HW}/lantern_hanging.gltf`,
   bone: `${HW}/bone_A.gltf`,
 } as const;
+
+/** KayKit Medieval Hexagon pack — the built-in tile map for the world floor. */
+const HX = `${ASSETS}/hexagon`;
+const HEX = {
+  grass: `${HX}/hex_grass.gltf`,
+  water: `${HX}/hex_water.gltf`,
+  coast: `${HX}/hex_coast_A.gltf`,
+  mountain: `${HX}/mountain_B_grass_trees.gltf`,
+  hills: `${HX}/hills_A_trees.gltf`,
+  forest: `${HX}/trees_A_medium.gltf`,
+} as const;
+/** Tile scale: native hex is 2u flat-to-flat; ×7 → chunky ~14u board tiles. */
+const HEX_S = 7;
 
 // ---------------------------------------------------------------------------
 
