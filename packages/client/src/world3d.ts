@@ -452,32 +452,26 @@ export class World3D {
     if (oldWater) oldWater.isVisible = false;
   }
 
-  /** Returns a placer that GPU-instances one hex tile model at a position. */
+  /**
+   * Returns a placer that drops one hex tile model at a position. Uses the
+   * same full-hierarchy instantiate as the mountains (preserves the glTF
+   * __root__ orientation AND normals) — createInstance+bake inverted the
+   * grass normals, darkening the floor.
+   */
   private hexInstancer(url: string): (x: number, y: number, z: number) => void {
     const c = this.containers?.get(url);
     if (!c) return () => {};
-    const e = c.instantiateModelsToScene((n) => `hexsrc:${this.hexCt++}:${n}`, false, { doNotInstantiate: true });
-    const src: Mesh[] = [];
-    for (const r of e.rootNodes) {
-      for (const m of r.getChildMeshes()) {
-        if (!(m instanceof Mesh)) continue;
-        // Bake the glTF __root__ transform (a coordinate flip) into the geometry
-        // so instances inherit correct orientation — otherwise tiles render
-        // upside-down (dark underside up).
-        m.computeWorldMatrix(true);
-        m.bakeCurrentTransformIntoVertices();
-        m.isVisible = false;
-        src.push(m);
-      }
-    }
     return (x: number, y: number, z: number): void => {
-      for (const s of src) {
-        const inst = s.createInstance(`hex:${this.hexCt++}`);
-        inst.scaling.setAll(HEX_S);
-        inst.position.set(x, y, z);
-        inst.isPickable = false;
-        inst.receiveShadows = true;
-        inst.freezeWorldMatrix();
+      const e = c.instantiateModelsToScene((n) => `hex:${this.hexCt++}:${n}`, false);
+      for (const r of e.rootNodes) {
+        if (r instanceof TransformNode) {
+          r.scaling.setAll(HEX_S);
+          r.position.set(x, y, z);
+        }
+        for (const m of r.getChildMeshes()) {
+          m.isPickable = false;
+          m.receiveShadows = true;
+        }
       }
     };
   }
