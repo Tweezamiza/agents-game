@@ -312,6 +312,7 @@ export class World3D {
     urls.add(CHEST_URL);
     urls.add(SPHINX_URL);
     urls.add(SIREN_URL);
+    for (const url of Object.values(HALLOWEEN)) urls.add(url);
 
     const loaded = new Map<string, AssetContainer>();
     await Promise.all(
@@ -369,6 +370,7 @@ export class World3D {
     void this.loadAssets().then(() => {
       this.buildCrystalTemplate();
       this.buildVillage();
+      this.dressDarkFantasy();
       // The Siren of the High Stones — a lone landmark on the boss highland.
       const siren = this.spawnProp(SIREN_URL, "highlandSiren");
       if (siren) this.placeAt(siren, 152, 130, Math.atan2(120 - 152, 120 - 130), 1.6);
@@ -522,6 +524,54 @@ export class World3D {
     wrapper.computeWorldMatrix(true);
     for (const m of wrapper.getChildMeshes()) m.freezeWorldMatrix();
     wrapper.freezeWorldMatrix();
+  }
+
+  /**
+   * Dark-fantasy dressing: a graveyard landmark plus withered dead trees
+   * scattered across the isle — all KayKit Halloween props, matching the
+   * undead bestiary. Decorative only; skips sea, shore, and the village.
+   */
+  private dressDarkFantasy(): void {
+    const place = (url: string, name: string, x: number, z: number, rotY: number, scale: number): void => {
+      if (this.groundY(x, z) <= 0.6) return; // never in the sea or on the shore
+      if (Math.hypot(x - SAFE_ZONE_CENTER.x, z - SAFE_ZONE_CENTER.z) < 18) return; // clear of the village
+      const prop = this.spawnProp(url, name);
+      if (prop) this.placeAt(prop, x, z, rotY, scale);
+    };
+
+    // Graveyard landmark, southwest of the village. Scales tuned to measured
+    // native sizes (Halloween props are authored larger than the nature pack).
+    const gx = 86;
+    const gz = 92;
+    const yard: [string, number, number, number, number][] = [
+      [HALLOWEEN.crypt, 0, -6, 0, 0.65],
+      [HALLOWEEN.gravestone, -4.5, 0, Math.PI, 0.95],
+      [HALLOWEEN.graveA, -1.5, 0, Math.PI, 0.42],
+      [HALLOWEEN.marker, 1.5, 0, Math.PI, 0.9],
+      [HALLOWEEN.gravestone, 4.5, 0, Math.PI, 0.95],
+      [HALLOWEEN.graveB, -3, 3.4, Math.PI, 0.42],
+      [HALLOWEEN.marker, 0, 3.4, Math.PI, 0.9],
+      [HALLOWEEN.graveA, 3, 3.4, Math.PI, 0.42],
+      [HALLOWEEN.coffin, 6, 1, 0.4, 0.6],
+      [HALLOWEEN.skullpost, -5, 7, 0, 0.9],
+      [HALLOWEEN.skullpost, 5, 7, 0, 0.9],
+      [HALLOWEEN.bone, -2, 5, 1.2, 2.1],
+      [HALLOWEEN.treeL, -7, -3, 0.5, 2.6],
+      [HALLOWEEN.treeL, 7, -4, 2.0, 2.6],
+    ];
+    let gi = 0;
+    for (const [url, dx, dz, rot, sc] of yard) place(url, `gy-${gi++}`, gx + dx, gz + dz, rot, sc);
+
+    // Withered dead trees across the meadows and forest belt.
+    const dead: [number, number, string, number][] = [
+      [70, 60, HALLOWEEN.treeM, 2.4], [100, 55, HALLOWEEN.treeL, 2.7], [150, 70, HALLOWEEN.treeM, 2.4],
+      [175, 95, HALLOWEEN.treeL, 2.7], [60, 112, HALLOWEEN.treeS, 2.0], [55, 150, HALLOWEEN.treeM, 2.4],
+      [80, 175, HALLOWEEN.treeL, 2.7], [120, 186, HALLOWEEN.treeM, 2.4], [160, 175, HALLOWEEN.treeS, 2.0],
+      [186, 150, HALLOWEEN.treeM, 2.4], [196, 110, HALLOWEEN.treeL, 2.7], [140, 52, HALLOWEEN.treeS, 2.0],
+      [46, 86, HALLOWEEN.treeM, 2.4], [165, 128, HALLOWEEN.treeS, 2.0], [105, 162, HALLOWEEN.treeM, 2.4],
+    ];
+    let ti = 0;
+    for (const [x, z, url, sc] of dead) place(url, `deadtree${ti++}`, x, z, (x * 1.3 + z) % (Math.PI * 2), sc);
   }
 
   private buildVillage(): void {
@@ -1208,6 +1258,23 @@ const SIREN_URL = `${ASSETS}/statues/siren.glb`;
 const PILLAR_URL = `${ASSETS}/dungeon/pillar_decorated.glb`;
 const FENCE_URL = `${ASSETS}/dungeon/barrier.glb`;
 const CHEST_URL = `${ASSETS}/dungeon/chest_gold.glb`;
+
+/** KayKit Halloween pack — dark-fantasy dressing matching the undead bestiary. */
+const HW = `${ASSETS}/halloween`;
+const HALLOWEEN = {
+  treeL: `${HW}/tree_dead_large.gltf`,
+  treeM: `${HW}/tree_dead_medium.gltf`,
+  treeS: `${HW}/tree_dead_small.gltf`,
+  graveA: `${HW}/grave_A.gltf`,
+  graveB: `${HW}/grave_B.gltf`,
+  gravestone: `${HW}/gravestone.gltf`,
+  marker: `${HW}/gravemarker_A.gltf`,
+  crypt: `${HW}/crypt.gltf`,
+  coffin: `${HW}/coffin.gltf`,
+  skullpost: `${HW}/post_skull.gltf`,
+  lantern: `${HW}/lantern_hanging.gltf`,
+  bone: `${HW}/bone_A.gltf`,
+} as const;
 
 // ---------------------------------------------------------------------------
 
