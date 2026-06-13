@@ -25,7 +25,7 @@ const IDLE_HEAL = 4;
 /** Idle wander keeps a mob within this radius of home. */
 const WANDER_RADIUS = 8;
 
-const SPAWN_COUNTS: Record<MobKind, number> = { boar: 14, wolf: 10, golem: 6, bonelord: 1 };
+const SPAWN_COUNTS: Record<MobKind, number> = { boar: 30, wolf: 22, golem: 14, bonelord: 2 };
 /** Terrain bands: boars in meadows, wolves in the forest belt, golems on the highland. */
 const SPAWN_BANDS: Record<MobKind, [number, number]> = {
   boar: [0.8, 3.2],

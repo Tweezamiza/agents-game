@@ -35,7 +35,7 @@ export interface DuskRig {
 export function applyDuskLighting(scene: Scene): DuskRig {
   scene.clearColor = new Color4(0.045, 0.05, 0.105, 1);
   scene.fogMode = Scene.FOGMODE_EXP2;
-  scene.fogDensity = 0.0034;
+  scene.fogDensity = 0.0016;
   scene.fogColor = new Color3(0.075, 0.085, 0.16);
 
   // Cool moonlit fill; raised so the hex-tile floor reads at gameplay zoom.

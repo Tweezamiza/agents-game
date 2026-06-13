@@ -16,7 +16,7 @@ export const PROTOCOL_VERSION = "0.4.0";
 
 export const WORLD = {
   /** Side length of the square island, in world units (XZ plane). */
-  SIZE: 240,
+  SIZE: 600,
   /** Movement/physics sub-tick, ms. State frames broadcast at this rate. */
   TICK_MS: 100,
   /** Game tick (AP regen, node respawn, gather/craft completion), ms. */

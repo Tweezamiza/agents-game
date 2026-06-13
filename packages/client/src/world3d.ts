@@ -245,7 +245,7 @@ export class World3D {
     );
     this.camera.attachControl(canvas, true);
     this.camera.lowerRadiusLimit = 4;
-    this.camera.upperRadiusLimit = 80;
+    this.camera.upperRadiusLimit = 220;
     this.camera.lowerBetaLimit = 0.15;
     this.camera.upperBetaLimit = 1.45;
     this.camera.wheelDeltaPercentage = 0.02;
@@ -472,6 +472,11 @@ export class World3D {
           m.isPickable = false;
           m.receiveShadows = true;
         }
+      }
+      // Tiles never move — freeze matrices so thousands cost almost nothing.
+      for (const n of e.rootNodes) {
+        if (n instanceof TransformNode) n.freezeWorldMatrix();
+        for (const m of n.getChildMeshes()) m.freezeWorldMatrix();
       }
     };
   }
@@ -1387,8 +1392,9 @@ const HEX = {
   hills: `${HX}/hills_A_trees.gltf`,
   forest: `${HX}/trees_A_medium.gltf`,
 } as const;
-/** Tile scale: native hex is 2u flat-to-flat; ×7 → chunky ~14u board tiles. */
-const HEX_S = 7;
+/** Tile scale: native hex is 2u flat-to-flat; ×8 → chunky ~16u board tiles
+ *  (bigger tiles keep the count sane across the much larger world). */
+const HEX_S = 8;
 
 // ---------------------------------------------------------------------------
 
