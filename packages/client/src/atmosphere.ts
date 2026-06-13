@@ -126,9 +126,12 @@ export function addMoonRays(
   moonDisc: Mesh,
 ): void {
   try {
+    // passRatio keeps the godrays scattering pass cheap (half-res, unseen);
+    // postProcessRatio MUST stay 1.0 or the whole scene renders at half
+    // resolution and the entire game looks blurry at every zoom level.
     const rays = new VolumetricLightScatteringPostProcess(
       "moonRays",
-      0.5,
+      { passRatio: 0.5, postProcessRatio: 1.0 },
       camera,
       moonDisc,
       48,
