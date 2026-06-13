@@ -63,18 +63,45 @@ interface CharacterSpec {
   attackAnim: string;
 }
 
-const CHARACTERS: Record<"human" | "agent", CharacterSpec> = {
-  human: {
+type ClassKey = "knight" | "mage" | "barbarian" | "rogue";
+
+/** Each KayKit class shows one signature weapon (the rest are hidden). */
+const CLASS_SPECS: Record<ClassKey, CharacterSpec> = {
+  knight: {
     url: `${ASSETS}/characters/Knight.glb`,
     hide: ["1H_Sword_Offhand", "Badge_Shield", "Rectangle_Shield", "Spike_Shield", "2H_Sword"],
     attackAnim: "1H_Melee_Attack_Slice_Diagonal",
   },
-  agent: {
+  mage: {
     url: `${ASSETS}/characters/Mage.glb`,
     hide: ["Spellbook", "Spellbook_open", "1H_Wand"],
     attackAnim: "Spellcast_Shoot",
   },
+  barbarian: {
+    url: `${ASSETS}/characters/Barbarian.glb`,
+    hide: ["1H_Axe_Offhand", "Barbarian_Round_Shield", "1H_Axe"],
+    attackAnim: "2H_Melee_Attack_Chop",
+  },
+  rogue: {
+    url: `${ASSETS}/characters/Rogue.glb`,
+    hide: ["2H_Crossbow"],
+    attackAnim: "1H_Ranged_Shoot",
+  },
 };
+
+/** Human players are knights; named AI citizens get a class for variety. */
+const AGENT_CLASS: Record<string, ClassKey> = {
+  Willow: "mage",
+  Flint: "barbarian",
+  Sage: "rogue",
+  Garrick: "knight",
+  Bramble: "rogue",
+};
+
+function specForPlayer(p: PlayerPublic): CharacterSpec {
+  if (p.role !== "agent") return CLASS_SPECS.knight;
+  return CLASS_SPECS[AGENT_CLASS[p.name] ?? "mage"];
+}
 
 /** World-boss model: KayKit skeleton re-baked obsidian-dark with ember eyes. */
 /** Every mob kind renders as a coherent KayKit skeleton (matches the knight). */
@@ -299,8 +326,7 @@ export class World3D {
 
   private async loadAssets(): Promise<void> {
     const urls = new Set<string>();
-    urls.add(CHARACTERS.human.url);
-    urls.add(CHARACTERS.agent.url);
+    for (const s of Object.values(CLASS_SPECS)) urls.add(s.url);
     for (const url of Object.values(MOB_URLS)) urls.add(url);
     for (const v of TREE_VARIANTS) urls.add(v.url);
     for (const v of ROCK_VARIANTS) urls.add(v.url);
@@ -870,7 +896,7 @@ export class World3D {
   }
 
   private createPlayer(p: PlayerPublic): PlayerVisual | null {
-    const spec = CHARACTERS[p.role === "agent" ? "agent" : "human"];
+    const spec = specForPlayer(p);
     const container = this.containers?.get(spec.url);
     if (!container) return null;
 
