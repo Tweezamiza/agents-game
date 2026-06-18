@@ -1,0 +1,19 @@
+{
+  "name": "agentworld",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev:server": "npm run dev -w @agentworld/server",
+    "dev:client": "npm run dev -w @agentworld/client",
+    "start:server": "npm run start -w @agentworld/server",
+    "agent": "npm run start -w @agentworld/agent",
+    "citizens": "npm run citizens -w @agentworld/agent",
+    "mcp": "npm run start -w @agentworld/mcp",
+    "test": "npm run test --workspaces --if-present"
+  }
+}
